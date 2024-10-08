@@ -101,3 +101,10 @@ typings/
 
 # TernJS port file
 .tern-port
+
+src/
+rollup.config.js
+package-lock.json
+.gitattributes
+.gitignore
+.github
