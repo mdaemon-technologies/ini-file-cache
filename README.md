@@ -23,11 +23,11 @@
 const iniCache = new IniFileCache("/path/to/file/", "config.ini");
 
 // Read a value from the ini file
-const value = iniCache.get("section", "key", "defaultValue");
+const value = iniCache.getSetting("section", "key", "defaultValue");
 console.log(value);
 
 // Write a value to the ini file
-iniCache.set("section", "key", "new value");
+iniCache.setSetting("section", "key", "new value");
 
 // Save changes to the file
 iniCache.save();
