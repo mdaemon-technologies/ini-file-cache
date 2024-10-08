@@ -6,7 +6,7 @@ import pkg from "./package.json" assert { type: "json" }
 export default [
   {
     input: "src/iniFileCache.ts",
-    external: [ 'fs', 'path' ],
+    external: [ 'fs', 'path', '@mdaemon/emitter/dist/emitter.cjs' ],
     output: [
       { file: pkg.main, format: "cjs", exports: "default", name: "IniFileCache" },
       { file: pkg.module, format: "es", exports: "default", name: "IniFileCache" },
