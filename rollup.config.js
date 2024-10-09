@@ -1,7 +1,9 @@
 import typescript from "@rollup/plugin-typescript"
 import commonjs from "@rollup/plugin-commonjs"
 import terser from "@rollup/plugin-terser"
-import pkg from "./package.json" assert { type: "json" }
+import * as fs from "fs"
+
+const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
 
 export default [
   {
