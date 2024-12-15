@@ -12,17 +12,22 @@ interface ISection {
   settings: ISetting[];
 }
 
-function lockFile(file: string) {
-  const lockFile = path.join(path.dirname(file), ".lck");
-  if (!fs.existsSync(lockFile)) {
-    fs.writeFileSync(lockFile, "");
+async function lockFile(file: string) {
+  const lock = path.join(path.dirname(file), ".lck");
+  let attempts = 0;
+  while (fs.existsSync(lock) && attempts < 20) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    attempts++;
+  }
+  if (!fs.existsSync(lock)) {
+    fs.writeFileSync(lock, "");
   }
 }
 
 function unlockFile(file: string) {
-  const lockFile = path.join(path.dirname(file), ".lck");
-  if (fs.existsSync(lockFile)) {
-    fs.unlinkSync(lockFile);
+  const lock = path.join(path.dirname(file), ".lck");
+  if (fs.existsSync(lock)) {
+    fs.unlinkSync(lock);
   }
 }
 
@@ -79,9 +84,29 @@ export default class IniFileCache {
     this.settings = sections;
   }
 
-  cacheFileSettings() {
-    const contents: string = fs.readFileSync(this.file, "utf8");
-    this.parseContents(contents);
+  async cacheFileSettings() {
+    let retryCount = 0;
+    const maxRetries = 20;
+    const retryDelay = 100; // ms
+
+    await new Promise(res => {
+      while (retryCount < maxRetries) {
+        try {
+          const contents: string = fs.readFileSync(this.file, "utf8");
+          this.parseContents(contents);
+          res(undefined);
+          return;
+        } catch (error) {
+          if (retryCount === maxRetries - 1) {
+            this.listener.emit("error", new Error(`Failed to read file after ${maxRetries} attempts: ${error}`));
+            return;
+          }
+          retryCount++;
+          // Wait before retrying
+          new Promise(resolve => setTimeout(resolve, retryDelay));
+        }
+      }
+    })
   }
 
   getSetting(section: string, key: string, defaultValue: string = ""): string | null {
@@ -153,12 +178,12 @@ export default class IniFileCache {
     }
   }
 
-  reload() {
-    this.cacheFileSettings();
+  async reload() {
+    await this.cacheFileSettings();
     this.listener.emit("reload", this.file);
   }
 
-  save() {
+  async save() {
     let contents = "";
     for (const section of this.settings) {
       contents += `[${section.name}]\n`;
@@ -168,16 +193,22 @@ export default class IniFileCache {
       contents += "\n";
     }
 
-    lockFile(this.file);
-    fs.writeFileSync(this.file, contents, { flush: true });
-    unlockFile(this.file);
-    this.listener.emit("save", this.file);
+    await lockFile(this.file);
+    try {
+      fs.writeFileSync(this.file, contents, { flush: true });
+      unlockFile(this.file);
+      this.listener.emit("save", this.file);
+    }
+    catch (error) {
+      unlockFile(this.file);
+      this.listener.emit("error", error);
+    }
   }
 
   watch() {
-    this.watching = fs.watch(this.file, (event, filename) => {
+    this.watching = fs.watch(this.file, async (event, filename) => {
       if (event === "change") {
-        this.cacheFileSettings();
+        await this.cacheFileSettings();
         this.listener.emit("change", filename);
       }
     });

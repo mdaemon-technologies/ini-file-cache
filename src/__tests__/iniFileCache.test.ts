@@ -65,11 +65,11 @@ describe('IniFileCache', () => {
     });
   });
 
-  test('save writes settings to file', () => {
+  test('save writes settings to file', async () => {
     iniFileCache['settings'] = [
       { name: 'Section1', settings: [{ key: 'key1', value: 'value1' }] }
     ];
-    iniFileCache.save();
+    await iniFileCache.save();
     expect(fs.writeFileSync).toHaveBeenCalledWith(
       path.join(mockCachePath, mockFileName),
       '[Section1]\nkey1=value1\n\n', {"flush": true}
@@ -136,10 +136,10 @@ describe('IniFileCache', () => {
     ]);
   });
 
-  test('reload calls cacheFileSettings and emits reload event', () => {
+  test('reload calls cacheFileSettings and emits reload event', async () => {
     const spyCacheFileSettings = jest.spyOn(iniFileCache, 'cacheFileSettings');
     const spyEmit = jest.spyOn(iniFileCache.listener, 'emit');
-    iniFileCache.reload();
+    await iniFileCache.reload();
     expect(spyCacheFileSettings).toHaveBeenCalled();
     expect(spyEmit).toHaveBeenCalledWith('reload', iniFileCache['file']);
   });
