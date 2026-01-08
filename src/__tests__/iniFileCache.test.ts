@@ -57,6 +57,99 @@ describe('IniFileCache', () => {
     expect(iniFileCache.getSetting('NonexistentSection', 'nonexistentKey', 'defaultValue')).toBe('defaultValue');
   });
 
+  test('getBool returns true for truthy values', () => {
+    iniFileCache['settings'] = [
+      { name: 'TestSection', settings: [
+        { key: 'key1', value: 't' },
+        { key: 'key2', value: 'T' },
+        { key: 'key3', value: '1' },
+        { key: 'key4', value: 'y' },
+        { key: 'key5', value: 'Y' },
+        { key: 'key6', value: 'true' },
+        { key: 'key7', value: 'yes' }
+      ]}
+    ];
+    expect(iniFileCache.getBool('TestSection', 'key1')).toBe(true);
+    expect(iniFileCache.getBool('TestSection', 'key2')).toBe(true);
+    expect(iniFileCache.getBool('TestSection', 'key3')).toBe(true);
+    expect(iniFileCache.getBool('TestSection', 'key4')).toBe(true);
+    expect(iniFileCache.getBool('TestSection', 'key5')).toBe(true);
+    expect(iniFileCache.getBool('TestSection', 'key6')).toBe(true);
+    expect(iniFileCache.getBool('TestSection', 'key7')).toBe(true);
+  });
+
+  test('getBool returns false for falsy values', () => {
+    iniFileCache['settings'] = [
+      { name: 'TestSection', settings: [
+        { key: 'key1', value: 'f' },
+        { key: 'key2', value: '0' },
+        { key: 'key3', value: 'n' },
+        { key: 'key4', value: 'false' },
+        { key: 'key5', value: 'no' }
+      ]}
+    ];
+    expect(iniFileCache.getBool('TestSection', 'key1')).toBe(false);
+    expect(iniFileCache.getBool('TestSection', 'key2')).toBe(false);
+    expect(iniFileCache.getBool('TestSection', 'key3')).toBe(false);
+    expect(iniFileCache.getBool('TestSection', 'key4')).toBe(false);
+    expect(iniFileCache.getBool('TestSection', 'key5')).toBe(false);
+  });
+
+  test('getBool returns default value when key not found', () => {
+    expect(iniFileCache.getBool('NonexistentSection', 'nonexistentKey', true)).toBe(true);
+    expect(iniFileCache.getBool('NonexistentSection', 'nonexistentKey', false)).toBe(false);
+    expect(iniFileCache.getBool('NonexistentSection', 'nonexistentKey')).toBe(false);
+  });
+
+  test('getBool returns default value when value is empty', () => {
+    iniFileCache['settings'] = [
+      { name: 'TestSection', settings: [{ key: 'emptyKey', value: '' }] }
+    ];
+    expect(iniFileCache.getBool('TestSection', 'emptyKey', true)).toBe(true);
+    expect(iniFileCache.getBool('TestSection', 'emptyKey', false)).toBe(false);
+  });
+
+  test('getInt returns correct integer value', () => {
+    iniFileCache['settings'] = [
+      { name: 'TestSection', settings: [
+        { key: 'key1', value: '42' },
+        { key: 'key2', value: '0' },
+        { key: 'key3', value: '-10' },
+        { key: 'key4', value: '999' }
+      ]}
+    ];
+    expect(iniFileCache.getInt('TestSection', 'key1')).toBe(42);
+    expect(iniFileCache.getInt('TestSection', 'key2')).toBe(0);
+    expect(iniFileCache.getInt('TestSection', 'key3')).toBe(-10);
+    expect(iniFileCache.getInt('TestSection', 'key4')).toBe(999);
+  });
+
+  test('getInt returns default value when key not found', () => {
+    expect(iniFileCache.getInt('NonexistentSection', 'nonexistentKey', 100)).toBe(100);
+    expect(iniFileCache.getInt('NonexistentSection', 'nonexistentKey')).toBe(0);
+  });
+
+  test('getInt returns default value when value is empty', () => {
+    iniFileCache['settings'] = [
+      { name: 'TestSection', settings: [{ key: 'emptyKey', value: '' }] }
+    ];
+    expect(iniFileCache.getInt('TestSection', 'emptyKey', 50)).toBe(50);
+    expect(iniFileCache.getInt('TestSection', 'emptyKey')).toBe(0);
+  });
+
+  test('getInt returns default value when value is not a number', () => {
+    iniFileCache['settings'] = [
+      { name: 'TestSection', settings: [
+        { key: 'key1', value: 'notANumber' },
+        { key: 'key2', value: 'abc123' },
+        { key: 'key3', value: '12.34' }
+      ]}
+    ];
+    expect(iniFileCache.getInt('TestSection', 'key1', 25)).toBe(25);
+    expect(iniFileCache.getInt('TestSection', 'key2', 30)).toBe(30);
+    expect(iniFileCache.getInt('TestSection', 'key3')).toBe(12); // parseInt truncates decimals
+  });
+
   test('setSetting adds new section and key', () => {
     iniFileCache.setSetting('NewSection', 'newKey', 'newValue');
     expect(iniFileCache['settings']).toContainEqual({

@@ -121,6 +121,29 @@ export default class IniFileCache {
     return setting.value;
   }
 
+  getBool(section: string, key: string, defaultValue: boolean = false): boolean {
+    const value = this.getSetting(section, key);
+    if (value === null || value === "") {
+      return defaultValue;
+    }
+
+    return /^(t|1|y)/i.test(value);
+  }
+
+  getInt(section: string, key: string, defaultValue: number = 0): number {
+    const value = this.getSetting(section, key);
+    if (value === null || value === "") {
+      return defaultValue;
+    }
+
+    const intValue = parseInt(value, 10);
+    if (isNaN(intValue)) {
+      return defaultValue;
+    }
+
+    return intValue;
+  }
+
   setSetting(section: string, key: string, value: string) {
     const sectionObj = this.settings.find((s) => s.name === section);
     if (!sectionObj) {

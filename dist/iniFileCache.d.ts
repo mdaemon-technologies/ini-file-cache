@@ -10,6 +10,8 @@ export default class IniFileCache {
     parseContents(contents: string): void;
     cacheFileSettings(): Promise<void>;
     getSetting(section: string, key: string, defaultValue?: string): string | null;
+    getBool(section: string, key: string, defaultValue?: boolean): boolean;
+    getInt(section: string, key: string, defaultValue?: number): number;
     setSetting(section: string, key: string, value: string): void;
     getSections(): string[];
     getKeys(section: string): string[];
