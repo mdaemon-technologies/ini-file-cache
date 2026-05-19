@@ -4,7 +4,16 @@ import IniFileCache from '../iniFileCache';
 
 jest.mock('fs');
 jest.mock('path');
-jest.mock('@mdaemon/emitter/dist/emitter.mjs');
+jest.mock('@mdaemon/emitter', () => {
+  return {
+    __esModule: true,
+    default: jest.fn().mockImplementation(() => ({
+      emit: jest.fn(),
+      on: jest.fn(),
+      off: jest.fn(),
+    })),
+  };
+});
 
 describe('IniFileCache', () => {
   let iniFileCache: IniFileCache;

@@ -1,6 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
-import Emitter from "@mdaemon/emitter/dist/emitter.cjs";
+import Emitter from "@mdaemon/emitter";
 
 interface ISetting {
   key: string;
@@ -229,7 +229,7 @@ export default class IniFileCache {
   }
 
   watch() {
-    this.watching = fs.watch(this.file, async (event, filename) => {
+    this.watching = fs.watch(this.file, async (event: string, filename: string | null) => {
       if (event === "change") {
         await this.cacheFileSettings();
         this.listener.emit("change", filename);

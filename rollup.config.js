@@ -8,7 +8,7 @@ const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
 export default [
   {
     input: "src/iniFileCache.ts",
-    external: [ 'fs', 'path', '@mdaemon/emitter/dist/emitter.cjs' ],
+    external: [ 'fs', 'path', '@mdaemon/emitter' ],
     output: [
       { file: pkg.main, format: "cjs", exports: "default", name: "IniFileCache" },
       { file: pkg.module, format: "es", exports: "default", name: "IniFileCache" },
