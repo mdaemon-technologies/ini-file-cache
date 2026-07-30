@@ -1,1 +1,0 @@
-declare module '@mdaemon/ini-file-cache/dist/iniFileCache.mjs'

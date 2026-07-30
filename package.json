@@ -1,6 +1,6 @@
 {
   "name": "@mdaemon/ini-file-cache",
-  "version": "2.0.4",
+  "version": "2.1.0",
   "description": "A library for reading, writing, and watching ini files for changes",
   "type": "module",
   "main": "dist/iniFileCache.cjs",
@@ -55,13 +55,21 @@
     "@mdaemon/emitter": "^2.1.0"
   },
   "files": [
-    "dist"
+    "dist",
+    "changelog.md"
   ],
   "exports": {
     ".": {
-      "import": "./dist/iniFileCache.mjs",
-      "require": "./dist/iniFileCache.cjs",
-      "types": "./dist/iniFileCache.d.ts"
-    }
-  }
+      "import": {
+        "types": "./dist/iniFileCache.d.ts",
+        "default": "./dist/iniFileCache.mjs"
+      },
+      "require": {
+        "types": "./dist/iniFileCache.d.cts",
+        "default": "./dist/iniFileCache.cjs"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "types": "dist/iniFileCache.d.ts"
 }
