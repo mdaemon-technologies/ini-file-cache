@@ -51,6 +51,9 @@ iniCache.watch();
 // Stop watching the file
 iniCache.unwatch();
 
+// Check whether a watcher is currently active
+iniCache.isWatching();
+
 // Get all sections
 const sections = iniCache.getSections();
 console.log(sections);
@@ -408,6 +411,17 @@ further `change` events are emitted and the file is no longer re-read.
 
 ```javascript
 iniCache.unwatch();
+```
+
+#### `isWatching(): boolean` ####
+
+True while a watcher is active on the file, false after `unwatch()` or when `watch()`
+failed to create the watcher.
+
+```javascript
+if (!iniCache.isWatching()) {
+  iniCache.watch();
+}
 ```
 
 ### Encoding ###

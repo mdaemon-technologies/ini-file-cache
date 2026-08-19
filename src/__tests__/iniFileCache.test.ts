@@ -670,6 +670,7 @@ describe('published declarations', () => {
     'save',
     'watch',
     'unwatch',
+    'isWatching',
   ];
 
   /**
@@ -1917,4 +1918,17 @@ describe('watch and unwatch', () => {
 
     expect(cache.getSetting('S', 'k')).toBe('2');
   }, 15000);
+
+  test('isWatching follows the watcher', () => {
+    const cache = create('is-watching.ini', '[S]\nk=1\n');
+
+    // The constructor starts the watcher.
+    expect(cache.isWatching()).toBe(true);
+
+    cache.unwatch();
+    expect(cache.isWatching()).toBe(false);
+
+    cache.watch();
+    expect(cache.isWatching()).toBe(true);
+  });
 });

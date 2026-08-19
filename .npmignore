@@ -108,3 +108,6 @@ package-lock.json
 .gitattributes
 .gitignore
 .github
+
+#ai stuff
+claude.md

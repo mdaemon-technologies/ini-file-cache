@@ -106,6 +106,8 @@ export default class IniFileCache {
     private readSignature;
     /** True when the file on disk is still exactly what this instance last wrote. */
     private isOwnLastWrite;
+    /** True while a watcher is active on the file. */
+    isWatching(): boolean;
     watch(): void;
     private matchesFile;
     /** Coalesces the multiple events most platforms emit for a single write. */

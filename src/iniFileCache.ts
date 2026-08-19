@@ -873,6 +873,11 @@ export default class IniFileCache {
     return current !== null && current.size === this.lastWrite.size && current.mtimeMs === this.lastWrite.mtimeMs;
   }
 
+  /** True while a watcher is active on the file. */
+  isWatching(): boolean {
+    return this.watching !== null;
+  }
+
   watch() {
     if (this.watching) {
       return;

@@ -5,6 +5,14 @@ All notable changes to `@mdaemon/ini-file-cache` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-08-19
+
+### Added
+
+- `isWatching()` reports whether a watcher is currently active on the file. `watch()` is
+  a no-op while already watching and silently gives up when the watcher cannot be created,
+  so there was no way to tell a watching instance from an unwatched one.
+
 ## [2.1.0] - 2026-07-28
 
 A correctness and hardening release. Every issue below was reproduced against 2.0.5
