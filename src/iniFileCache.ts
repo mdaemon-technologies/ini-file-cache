@@ -20,9 +20,25 @@ interface ILockResult {
   error?: unknown;
 }
 
+/** Every event this library emits. Named so that a typo cannot compile into silence. */
+type IniEvent = "change" | "reload" | "save" | "error" | "close";
+
 interface IFileSignature {
   size: number;
   mtimeMs: number;
+}
+
+/**
+ * What a read of the file established. Returned rather than stashed on the instance so
+ * that the parse which consumes it takes it as an argument: a field would make every
+ * caller's correctness depend on the two calls staying adjacent.
+ */
+interface IReadResult {
+  contents: string;
+  /** The exact bytes found, so a save reproduces them under any encoding. */
+  byteOrderMark: Buffer | null;
+  /** The decode did not round-trip, so writing it back would change untouched bytes. */
+  lossy: boolean;
 }
 
 /**
@@ -31,11 +47,25 @@ interface IFileSignature {
  * supports, and do not depend on how that package ships its own declarations.
  */
 export interface IIniFileCacheListener {
-  on(event: "change" | "reload" | "save", handler: (filePath: string) => void): void;
+  /** `change` carries the file's base name, not its path: see the `reload` overload. */
+  on(event: "change", handler: (fileName: string) => void): void;
+  on(event: "change", namespace: string, handler: (fileName: string) => void): void;
+  on(event: "reload" | "save", handler: (filePath: string) => void): void;
+  on(event: "reload" | "save", namespace: string, handler: (filePath: string) => void): void;
   on(event: "error", handler: (error: Error) => void): void;
+  on(event: "error", namespace: string, handler: (error: Error) => void): void;
   on(event: "close", handler: () => void): void;
+  on(event: "close", namespace: string, handler: () => void): void;
   on(event: string, handler: (...args: any[]) => void): void;
+  on(event: string, namespace: string, handler: (...args: any[]) => void): void;
   once(event: string, handler: (...args: any[]) => void): void;
+  once(event: string, namespace: string, handler: (...args: any[]) => void): void;
+  /**
+   * Removes handlers for `event`. A handler registered without a namespace is filed under
+   * a shared default one, and this removes every handler in the namespace it is given — so
+   * `off("change")` unsubscribes every other part of the application that also subscribed
+   * without a namespace. Pass the namespace used at registration to remove only your own.
+   */
   off(event: string, namespace?: string): void;
   emit(event: string, payload?: unknown): void;
 }
@@ -72,6 +102,19 @@ const LOCK_MAX_ATTEMPTS = 20;
 const LOCK_RETRY_DELAY = 100;
 const LOCK_STALE_MS = 10000;
 
+// Unmatched watch events tolerated before checking that the directory is still there.
+// A deleted watch directory produces an unbounded stream of them on Windows.
+const UNMATCHED_EVENTS_BEFORE_CHECK = 500;
+
+// Multiple of debounceDelay after which a reload happens even though events are still
+// arriving. Without a cap, a file written faster than the delay restarts the timer forever
+// and is never adopted at all.
+const DEBOUNCE_MAX_WAIT_FACTOR = 10;
+
+// fs write options. `flush` was added in Node 20.10 and is silently ignored before that,
+// so on the older runtimes this package still supports the write simply is not flushed.
+const WRITE_OPTIONS: fs.WriteFileOptions = { flush: true } as fs.WriteFileOptions;
+
 const RENAME_MAX_ATTEMPTS = 3;
 const RENAME_RETRY_DELAY = 50;
 // Windows cannot rename over a file another process holds open; writing in place still works.
@@ -90,10 +133,15 @@ const INVALID_KEY = /[\r\n\0=]/;
 const COMMENT_START = /^[;#]/;
 const INVALID_VALUE = /[\r\n\0]/;
 
-// U+FEFF, written as the three-byte UTF-8 sequence EF BB BF.
-const BYTE_ORDER_MARK = "﻿";
+// U+FEFF, written as the three-byte UTF-8 sequence EF BB BF. Derived from the code point
+// rather than written as the literal character, which is invisible in an editor and is
+// easily mangled by a re-save under another encoding.
+const BYTE_ORDER_MARK_CODE = 0xfeff;
+const BYTE_ORDER_MARK = String.fromCharCode(BYTE_ORDER_MARK_CODE);
 const BYTE_ORDER_MARK_BYTES = Buffer.from([0xef, 0xbb, 0xbf]);
 
+// Matches the line endings of any platform, and of a file that mixes them.
+const LINE_BREAK = /\r\n|\n|\r/;
 const SECTION_HEADER = /^\[([^\]]*)\]\s*(?:[;#].*)?$/;
 const TRUE_VALUES = /^(?:t|true|y|yes|on|1)$/i;
 const FALSE_VALUES = /^(?:f|false|n|no|off|0)$/i;
@@ -109,6 +157,10 @@ function lockPath(file: string): string {
   return `${file}.lck`;
 }
 
+function tempPath(file: string): string {
+  return `${file}.tmp`;
+}
+
 /**
  * Creates the lock file for `file` with an exclusive open, so two processes can never
  * believe they hold it at the same time. Locks older than LOCK_STALE_MS are treated as
@@ -120,8 +172,11 @@ async function acquireLock(file: string): Promise<ILockResult> {
   const token = `${process.pid}-${process.hrtime.bigint()}-${++lockCounter}`;
   for (let attempt = 0; attempt < LOCK_MAX_ATTEMPTS; attempt++) {
     let descriptor: number | null = null;
+    let created = false;
     try {
       descriptor = fs.openSync(lock, "wx");
+      // From here on the lock file is ours: an exclusive open is what makes it so.
+      created = true;
       fs.writeFileSync(descriptor, token);
       fs.closeSync(descriptor);
       descriptor = null;
@@ -138,9 +193,11 @@ async function acquireLock(file: string): Promise<ILockResult> {
         descriptor = null;
       }
       if (error?.code !== "EEXIST") {
-        if (fs.existsSync(lock)) {
-          // The lock was created but could not be stamped with our token, so it would
-          // block every writer until it aged out. Take it back out.
+        if (created) {
+          // Ours: created, but not stamped with our token, so it would block every writer
+          // until it aged out. Take it back out. A failure to open says nothing about who
+          // owns an existing lock — a descriptor limit or a permission error while another
+          // writer legitimately holds it must not remove theirs.
           try {
             fs.unlinkSync(lock);
           } catch {
@@ -177,6 +234,36 @@ function releaseLock(file: string, token: string): void {
   } catch {
     // Already gone, or unreadable; either way there is nothing of ours to remove.
   }
+}
+
+/**
+ * Adds a section to both views at once: `sections` is the file's own order, `index` is the
+ * normalized-name lookup, and they hold the same objects. Every mutation goes through here
+ * so that neither can be updated without the other.
+ */
+function addSection(
+  name: string,
+  normalized: string,
+  sections: ISection[],
+  index: Map<string, ISection>,
+  atFront = false
+): ISection {
+  const section: ISection = { name, settings: [], keys: new Map() };
+  if (atFront) {
+    sections.unshift(section);
+  } else {
+    sections.push(section);
+  }
+  index.set(normalized, section);
+  return section;
+}
+
+/** Adds a setting to both views of its section, for the same reason as addSection. */
+function addSetting(section: ISection, key: string, normalizedKey: string, value: string): ISetting {
+  const setting: ISetting = { key, value };
+  section.settings.push(setting);
+  section.keys.set(normalizedKey, setting);
+  return setting;
 }
 
 function sanitizeName(input: string, label: string, invalid: RegExp): string {
@@ -216,7 +303,71 @@ function sanitizeValue(value: string): string {
   return value.trim();
 }
 
-function positiveNumberOption(value: unknown, label: string, fallback: number, minimum: number): number {
+/**
+ * The `error` event is declared as carrying an Error, so anything thrown that is not one
+ * is wrapped rather than passed through and quietly breaking that contract.
+ */
+function toError(value: unknown): Error {
+  return value instanceof Error ? value : new Error(String(value));
+}
+
+function requiredString(value: unknown, label: string): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new TypeError(`${label} must be a non-empty string`);
+  }
+  return value;
+}
+
+/**
+ * Resolves fileName against cachePath. A fileName may reach outside cachePath with "..":
+ * both arguments come from the caller, who can point anywhere via cachePath regardless, so
+ * there is no boundary here to enforce by default. Callers passing an untrusted fileName
+ * opt in with restrictToCachePath.
+ */
+function resolveTarget(cachePath: string, fileName: string, restrict: boolean): string {
+  const root = path.resolve(cachePath);
+  const resolved = path.resolve(root, fileName);
+  if (!restrict) {
+    return resolved;
+  }
+  const prefix = root.endsWith(path.sep) ? root : root + path.sep;
+  // Compare the way the filesystem does, so an absolute fileName that differs only in case
+  // is not rejected as though it were outside.
+  const insensitive = CASE_INSENSITIVE_PLATFORMS.includes(process.platform);
+  const contained = insensitive
+    ? resolved.toLowerCase().startsWith(prefix.toLowerCase())
+    : resolved.startsWith(prefix);
+  if (!contained) {
+    throw new Error(`fileName "${fileName}" resolves outside of the cache path`);
+  }
+  return resolved;
+}
+
+/** Creates the directory and an empty file, adopting either if it is already there. */
+function ensureFile(file: string, directory: string): void {
+  // A recursive mkdir is already a no-op for a directory that exists, so testing first
+  // would only add a syscall and a window for the directory to appear in between.
+  fs.mkdirSync(directory, { recursive: true });
+  try {
+    // "wx" rather than a bare write: between an existence check and a plain write, another
+    // process could create and populate the file, and the write would truncate everything
+    // it had just put there.
+    fs.writeFileSync(file, "", { flag: "wx" });
+  } catch (error: any) {
+    if (error?.code !== "EEXIST") {
+      throw error;
+    }
+  }
+}
+
+function booleanOption(value: unknown, label: string): boolean {
+  if (value !== undefined && typeof value !== "boolean") {
+    throw new TypeError(`${label} must be a boolean`);
+  }
+  return value === true;
+}
+
+function numberOption(value: unknown, label: string, fallback: number, minimum: number): number {
   if (value === undefined || value === null) {
     return fallback;
   }
@@ -229,6 +380,8 @@ function positiveNumberOption(value: unknown, label: string, fallback: number, m
 export default class IniFileCache {
   private file: string;
   private baseName: string;
+  /** The watched directory: dirname of the file, needed on every watch and every retry. */
+  private directory: string;
   private settings: ISection[];
   /**
    * Normalized section name to the same ISection objects held in `settings`. Without it
@@ -237,7 +390,11 @@ export default class IniFileCache {
    */
   private sectionIndex: Map<string, ISection>;
   private watching: fs.FSWatcher | null;
+  // Consecutive watch events that named something other than the watched file.
+  private unmatchedEvents: number;
   private debounceTimer: ReturnType<typeof setTimeout> | null;
+  // When the current burst of change events began, for the maximum-wait cap.
+  private debounceStartedAt: number | null;
   private lastWrite: IFileSignature | null;
   private ready: boolean;
   // Preserved from the file that was read so a save does not silently rewrite the
@@ -245,9 +402,6 @@ export default class IniFileCache {
   // exact bytes that were found: re-encoding U+FEFF would emit the wrong ones for any
   // encoding other than the file's own.
   private byteOrderMarkBytes: Buffer | null;
-  // Carries the mark from a file read into the parse that follows it. `undefined` means
-  // the content did not come from a file, so the current mark stands.
-  private pendingByteOrderMark: Buffer | null | undefined;
   private endOfLine: string;
   private namelessHasHeader: boolean;
   private _listener: IIniFileCacheListener;
@@ -262,25 +416,11 @@ export default class IniFileCache {
   private readonly debounceDelay: number;
   private readonly encoding: BufferEncoding;
 
-  constructor(
-    private readonly cachePath: string,
-    private readonly fileName: string,
-    options: IIniFileCacheOptions = {}
-  ) {
-    if (typeof cachePath !== "string" || !cachePath.trim()) {
-      throw new TypeError("cachePath must be a non-empty string");
-    }
-    if (typeof fileName !== "string" || !fileName.trim()) {
-      throw new TypeError("fileName must be a non-empty string");
-    }
+  constructor(cachePath: string, fileName: string, options: IIniFileCacheOptions = {}) {
+    requiredString(cachePath, "cachePath");
+    requiredString(fileName, "fileName");
     if (options === null || typeof options !== "object") {
       throw new TypeError("options must be an object");
-    }
-    if (options.caseInsensitive !== undefined && typeof options.caseInsensitive !== "boolean") {
-      throw new TypeError("caseInsensitive must be a boolean");
-    }
-    if (options.restrictToCachePath !== undefined && typeof options.restrictToCachePath !== "boolean") {
-      throw new TypeError("restrictToCachePath must be a boolean");
     }
     if (options.encoding !== undefined && !Buffer.isEncoding(options.encoding)) {
       throw new TypeError(`encoding "${options.encoding}" is not a supported buffer encoding`);
@@ -288,12 +428,19 @@ export default class IniFileCache {
 
     this.settings = [];
     this.sectionIndex = new Map();
-    this._listener = new Emitter();
+    // The emitter catches a handler's exception and reports it here rather than letting it
+    // propagate out of emit(), so this hook — not a try/catch around emit — is what keeps a
+    // throwing listener from escaping into library control flow. Supplying it also replaces
+    // the emitter's default hook, which writes the exception to the console.
+    this._listener = new Emitter({
+      onError: (error: unknown, event: string) => this.reportListenerError(error, event),
+    });
     this.watching = null;
+    this.unmatchedEvents = 0;
     this.debounceTimer = null;
+    this.debounceStartedAt = null;
     this.lastWrite = null;
     this.byteOrderMarkBytes = null;
-    this.pendingByteOrderMark = undefined;
     this.endOfLine = "\n";
     this.namelessHasHeader = false;
     this.lossyRead = false;
@@ -301,46 +448,16 @@ export default class IniFileCache {
     // Errors raised while the constructor runs are deferred, so a listener attached
     // immediately after construction still sees them.
     this.ready = false;
-    this.maxFileSize = positiveNumberOption(options.maxFileSize, "maxFileSize", DEFAULT_MAX_FILE_SIZE, 1);
-    this.caseInsensitive = options.caseInsensitive === true;
-    this.debounceDelay = positiveNumberOption(options.debounceDelay, "debounceDelay", DEFAULT_DEBOUNCE_DELAY, 0);
+    this.maxFileSize = numberOption(options.maxFileSize, "maxFileSize", DEFAULT_MAX_FILE_SIZE, 1);
+    this.caseInsensitive = booleanOption(options.caseInsensitive, "caseInsensitive");
+    this.debounceDelay = numberOption(options.debounceDelay, "debounceDelay", DEFAULT_DEBOUNCE_DELAY, 0);
+    const restrictToCachePath = booleanOption(options.restrictToCachePath, "restrictToCachePath");
     this.encoding = options.encoding ?? "utf8";
 
-    // A fileName may reach outside cachePath with "..": both arguments come from the
-    // caller, who can point anywhere via cachePath regardless, so there is no boundary
-    // here to enforce by default. Callers that do pass an untrusted fileName can opt in.
-    const root = path.resolve(this.cachePath);
-    const resolved = path.resolve(root, this.fileName);
-    if (options.restrictToCachePath === true) {
-      const prefix = root.endsWith(path.sep) ? root : root + path.sep;
-      // Compare the way the filesystem does, so an absolute fileName that differs only in
-      // case is not rejected as though it were outside.
-      const insensitive = CASE_INSENSITIVE_PLATFORMS.includes(process.platform);
-      const contained = insensitive
-        ? resolved.toLowerCase().startsWith(prefix.toLowerCase())
-        : resolved.startsWith(prefix);
-      if (!contained) {
-        throw new Error(`fileName "${fileName}" resolves outside of the cache path`);
-      }
-    }
-
-    this.file = resolved;
+    this.file = resolveTarget(cachePath, fileName, restrictToCachePath);
     this.baseName = path.basename(this.file);
-
-    const directory = path.dirname(this.file);
-    if (!fs.existsSync(directory)) {
-      fs.mkdirSync(directory, { recursive: true });
-    }
-    try {
-      // "wx" rather than a bare write: between an existence check and a plain write,
-      // another process could create and populate the file, and the write would truncate
-      // everything it had just put there.
-      fs.writeFileSync(this.file, "", { flag: "wx" });
-    } catch (error: any) {
-      if (error?.code !== "EEXIST") {
-        throw error;
-      }
-    }
+    this.directory = path.dirname(this.file);
+    ensureFile(this.file, this.directory);
 
     this.loadSync();
     this.watch();
@@ -355,7 +472,7 @@ export default class IniFileCache {
    * Emits without letting a listener's exception escape into library control flow, and
    * defers events raised during construction until a listener can exist.
    */
-  private emitEvent(event: string, payload?: unknown): void {
+  private emitEvent(event: IniEvent, payload?: unknown): void {
     if (!this.ready) {
       // Dispatched directly rather than re-entering this check: if the constructor threw
       // before setting `ready`, re-checking would reschedule itself forever.
@@ -365,19 +482,30 @@ export default class IniFileCache {
     this.dispatchEvent(event, payload);
   }
 
-  private dispatchEvent(event: string, payload?: unknown): void {
+  private dispatchEvent(event: IniEvent, payload?: unknown): void {
     try {
       this._listener.emit(event, payload);
     } catch (error) {
-      if (event === "error") {
-        // Reporting a failed error listener through the same listener would loop.
-        return;
-      }
-      try {
-        this._listener.emit("error", error);
-      } catch {
-        // The error listener threw as well; there is nowhere left to report this.
-      }
+      // The emitter hands a handler's exception to the onError hook installed in the
+      // constructor rather than letting it escape, so this catches only a failure of
+      // emit itself.
+      this.reportListenerError(error, event);
+    }
+  }
+
+  /**
+   * A listener threw. It is reported as an `error` event so that it cannot escape into
+   * library control flow, unless the listener that threw was an `error` listener itself:
+   * routing that back through the same event would loop.
+   */
+  private reportListenerError(error: unknown, event: string): void {
+    if (event === "error") {
+      return;
+    }
+    try {
+      this._listener.emit("error", toError(error));
+    } catch {
+      // The error listener threw as well; there is nowhere left to report this.
     }
   }
 
@@ -406,6 +534,15 @@ export default class IniFileCache {
 
   /** Resolves to true when the content parsed; false when it was rejected and `error` was emitted. */
   parseContents(contents: string): boolean {
+    return this.parse(contents, null);
+  }
+
+  /**
+   * Replaces the cache with `contents`. `source` is the read it came from, or null when a
+   * caller supplied it directly — which is what decides whether a lossy decode still
+   * describes what the cache holds.
+   */
+  private parse(contents: string, source: IReadResult | null): boolean {
     if (typeof contents !== "string") {
       this.emitEvent("error", new TypeError("contents must be a string"));
       return false;
@@ -414,25 +551,22 @@ export default class IniFileCache {
     // A file read hands its mark over as bytes; a string passed in directly may still
     // carry U+FEFF, which is encoded with this file's encoding so UTF-16 keeps FF FE
     // rather than being handed UTF-8's EF BB BF.
-    let byteOrderMark = this.pendingByteOrderMark;
-    this.pendingByteOrderMark = undefined;
+    let byteOrderMark = source ? source.byteOrderMark : undefined;
 
     let body = contents;
-    if (contents.charCodeAt(0) === 0xfeff) {
+    if (contents.charCodeAt(0) === BYTE_ORDER_MARK_CODE) {
       body = contents.slice(1);
       byteOrderMark = Buffer.from(BYTE_ORDER_MARK, this.encoding);
     }
 
-    const firstLineBreak = /\r\n|\n|\r/.exec(body);
+    const firstLineBreak = LINE_BREAK.exec(body);
 
-    const lines = body.split(/\r\n|\n|\r/);
+    const lines = body.split(LINE_BREAK);
     const sections: ISection[] = [];
     // Indexed by normalized name so that parsing stays linear in the number of lines
     // rather than scanning every section and key already seen.
     const sectionIndex = new Map<string, ISection>();
-    const settingIndex = new Map<string, Map<string, ISetting>>();
     let currentSection: ISection | null = null;
-    let currentSettings: Map<string, ISetting> | null = null;
     let sawContentOutsideSection = false;
     let sawSectionHeader = false;
     // Whether the nameless leading section came from a literal "[]" header rather than
@@ -451,14 +585,14 @@ export default class IniFileCache {
         const name = header[1].trim();
         const normalized = this.normalize(name);
         sawSectionHeader = true;
+        if (name === "") {
+          // Recorded for every "[]" header, not only one that creates the section: leading
+          // bare keys may have created it already, and the header would then be dropped.
+          namelessHasHeader = true;
+        }
         let section = sectionIndex.get(normalized);
         if (!section) {
-          if (name === "") {
-            namelessHasHeader = true;
-          }
-          section = { name, settings: [], keys: new Map() };
-          sectionIndex.set(normalized, section);
-          sections.push(section);
+          section = addSection(name, normalized, sections, sectionIndex);
         }
         // A repeated header continues the existing section rather than shadowing it.
         currentSection = section;
@@ -469,9 +603,7 @@ export default class IniFileCache {
         // Settings before any header belong to a nameless leading section, kept so that
         // a save does not erase the part of the file this parser did not ask for.
         sawContentOutsideSection = true;
-        currentSection = { name: "", settings: [], keys: new Map() };
-        sectionIndex.set("", currentSection);
-        sections.unshift(currentSection);
+        currentSection = addSection("", "", sections, sectionIndex, true);
       }
 
       // Split on the first "=" only, so values may contain "=" themselves.
@@ -488,9 +620,7 @@ export default class IniFileCache {
         existing.value = value;
         continue;
       }
-      const setting = { key, value };
-      currentSection.settings.push(setting);
-      currentSection.keys.set(normalizedKey, setting);
+      addSetting(currentSection, key, normalizedKey, value);
     }
 
     if (sawContentOutsideSection && !sawSectionHeader) {
@@ -502,6 +632,10 @@ export default class IniFileCache {
     }
 
     this.loaded = true;
+    // Set here rather than at the read, so it describes the content the cache actually
+    // holds. Content handed in directly replaces every byte that came from the file, so
+    // there is nothing left for the refusal to protect.
+    this.lossyRead = source !== null && source.lossy;
     this.namelessHasHeader = namelessHasHeader;
     if (byteOrderMark !== undefined) {
       this.byteOrderMarkBytes = byteOrderMark;
@@ -517,17 +651,35 @@ export default class IniFileCache {
   }
 
   /** Reads the file, refusing anything larger than maxFileSize. Throws on read errors. */
-  private readFileContents(): string | null {
-    const stats = fs.statSync(this.file);
-    if (stats.size > this.maxFileSize) {
-      this.emitEvent(
-        "error",
-        new Error(`${this.file} is ${stats.size} bytes, which exceeds the maximum of ${this.maxFileSize} bytes`)
-      );
-      return null;
+  private readFileContents(): IReadResult | null {
+    // Measured and read through one descriptor. Stat-then-read by path lets a file that
+    // grows in between be read in full, which is the size limit failing exactly when it is
+    // needed: against a file that is being written to right now.
+    const descriptor = fs.openSync(this.file, "r");
+    let raw: Buffer;
+    try {
+      const stats = fs.fstatSync(descriptor);
+      if (stats.size > this.maxFileSize) {
+        this.emitEvent(
+          "error",
+          new Error(`${this.file} is ${stats.size} bytes, which exceeds the maximum of ${this.maxFileSize} bytes`)
+        );
+        return null;
+      }
+      raw = fs.readFileSync(descriptor);
+      if (raw.length > this.maxFileSize) {
+        // The file grew while it was being read. Reading to the end of the descriptor is
+        // what keeps the content consistent, so the limit is enforced again on the result
+        // rather than by truncating it into a half file that would parse as a whole one.
+        this.emitEvent(
+          "error",
+          new Error(`${this.file} is ${raw.length} bytes, which exceeds the maximum of ${this.maxFileSize} bytes`)
+        );
+        return null;
+      }
+    } finally {
+      fs.closeSync(descriptor);
     }
-
-    const raw = fs.readFileSync(this.file);
 
     // Strip the byte order mark before decoding rather than after. Under a single-byte
     // encoding it would otherwise decode to three stray characters glued to the first
@@ -539,8 +691,8 @@ export default class IniFileCache {
     // Decoding a legacy single-byte file as UTF-8 turns every high byte into U+FFFD.
     // Writing that back would replace bytes this library never touched, so detect it by
     // re-encoding and refuse to save rather than corrupt the file.
-    this.lossyRead = !Buffer.from(decoded, this.encoding).equals(buffer);
-    if (this.lossyRead) {
+    const lossy = !Buffer.from(decoded, this.encoding).equals(buffer);
+    if (lossy) {
       this.emitEvent(
         "error",
         new Error(
@@ -550,43 +702,57 @@ export default class IniFileCache {
       );
     }
 
-    // Handed to parseContents as bytes rather than as a character, so the exact mark is
-    // the one written back. Set last: every successful read is parsed immediately, which
-    // is what consumes this.
-    this.pendingByteOrderMark = hasByteOrderMark ? BYTE_ORDER_MARK_BYTES : null;
-    return decoded;
+    // The mark travels as bytes rather than as a character, so the exact one that was
+    // found is the one written back.
+    return { contents: decoded, byteOrderMark: hasByteOrderMark ? BYTE_ORDER_MARK_BYTES : null, lossy };
   }
 
   /** Single-attempt synchronous load, used during construction. */
   private loadSync(): void {
     try {
-      const contents = this.readFileContents();
-      if (contents !== null) {
-        this.parseContents(contents);
+      const read = this.readFileContents();
+      if (read !== null) {
+        this.parse(read.contents, read);
       }
     } catch (error) {
       this.emitEvent("error", new Error(`Failed to read file: ${error}`));
     }
   }
 
-  /** Resolves true when the file was read; false when it could not be and `error` was emitted. */
-  async cacheFileSettings(): Promise<boolean> {
+  /**
+   * Reads with retries, because a file being replaced is briefly unreadable. `guard` is
+   * re-checked before every attempt and abandons the read silently when it returns false.
+   * Resolves null when there is nothing to parse, having already emitted the reason.
+   */
+  private async readWithRetries(guard?: () => boolean): Promise<IReadResult | null> {
     for (let attempt = 0; attempt < READ_MAX_ATTEMPTS; attempt++) {
+      if (guard && !guard()) {
+        return null;
+      }
       try {
-        const contents = this.readFileContents();
-        if (contents === null) {
-          return false;
-        }
-        return this.parseContents(contents);
+        return this.readFileContents();
       } catch (error) {
         if (attempt === READ_MAX_ATTEMPTS - 1) {
           this.emitEvent("error", new Error(`Failed to read file after ${READ_MAX_ATTEMPTS} attempts: ${error}`));
-          return false;
+          // The usual cause of an unreadable file is a deleted one, and the directory may
+          // have gone with it. Other platforms simply stop delivering watch events in that
+          // case, so this is where a dead watcher is noticed there.
+          this.stopIfDirectoryMissing();
+          return null;
         }
         await delay(READ_RETRY_DELAY);
       }
     }
-    return false;
+    return null;
+  }
+
+  /** Resolves true when the file was read; false when it could not be and `error` was emitted. */
+  async cacheFileSettings(): Promise<boolean> {
+    const read = await this.readWithRetries();
+    if (read === null) {
+      return false;
+    }
+    return this.parse(read.contents, read);
   }
 
   getSetting(section: string, key: string, defaultValue: string | null = null): string | null {
@@ -607,11 +773,11 @@ export default class IniFileCache {
       return defaultValue;
     }
 
-    const trimmed = value.trim();
-    if (TRUE_VALUES.test(trimmed)) {
+    // Already trimmed, both by the parser and by setSetting.
+    if (TRUE_VALUES.test(value)) {
       return true;
     }
-    if (FALSE_VALUES.test(trimmed)) {
+    if (FALSE_VALUES.test(value)) {
       return false;
     }
 
@@ -624,12 +790,11 @@ export default class IniFileCache {
       return defaultValue;
     }
 
-    const trimmed = value.trim();
-    if (!INTEGER_VALUE.test(trimmed)) {
+    if (!INTEGER_VALUE.test(value)) {
       return defaultValue;
     }
 
-    const intValue = Number(trimmed);
+    const intValue = Number(value);
     if (!Number.isSafeInteger(intValue)) {
       return defaultValue;
     }
@@ -637,7 +802,7 @@ export default class IniFileCache {
     return intValue;
   }
 
-  setSetting(section: string, key: string, value: string) {
+  setSetting(section: string, key: string, value: string): void {
     // "" addresses the nameless leading section, the one holding keys that appear before
     // any header; every other name goes through the usual validation.
     const sectionName =
@@ -645,12 +810,9 @@ export default class IniFileCache {
     const settingKey = sanitizeKey(key);
     const settingValue = sanitizeValue(value);
 
-    const created = { key: settingKey, value: settingValue };
     let sectionObj = this.findSection(sectionName);
     if (!sectionObj) {
-      sectionObj = { name: sectionName, settings: [], keys: new Map() };
-      this.settings.push(sectionObj);
-      this.sectionIndex.set(this.normalize(sectionName), sectionObj);
+      sectionObj = addSection(sectionName, this.normalize(sectionName), this.settings, this.sectionIndex);
     }
 
     const setting = this.findSetting(sectionObj, settingKey);
@@ -658,15 +820,14 @@ export default class IniFileCache {
       setting.value = settingValue;
       return;
     }
-    sectionObj.settings.push(created);
-    sectionObj.keys.set(this.normalize(settingKey), created);
+    addSetting(sectionObj, settingKey, this.normalize(settingKey), settingValue);
   }
 
-  getSections() {
+  getSections(): string[] {
     return this.settings.map((s) => s.name);
   }
 
-  getKeys(section: string) {
+  getKeys(section: string): string[] {
     const sectionObj = this.findSection(section);
     if (!sectionObj) {
       return [];
@@ -674,11 +835,11 @@ export default class IniFileCache {
     return sectionObj.settings.map((s) => s.key);
   }
 
-  hasSection(section: string) {
+  hasSection(section: string): boolean {
     return this.findSection(section) !== null;
   }
 
-  hasKey(section: string, key: string) {
+  hasKey(section: string, key: string): boolean {
     const sectionObj = this.findSection(section);
     if (!sectionObj) {
       return false;
@@ -686,7 +847,7 @@ export default class IniFileCache {
     return this.findSetting(sectionObj, key) !== null;
   }
 
-  removeSection(section: string) {
+  removeSection(section: string): void {
     const sectionObj = this.findSection(section);
     if (!sectionObj) {
       return;
@@ -695,7 +856,7 @@ export default class IniFileCache {
     this.sectionIndex.delete(this.normalize(section));
   }
 
-  removeKey(section: string, key: string) {
+  removeKey(section: string, key: string): void {
     const sectionObj = this.findSection(section);
     if (!sectionObj) {
       return;
@@ -741,12 +902,12 @@ export default class IniFileCache {
       // The file may not exist yet; treat it as a regular file.
     }
     if (isSymbolicLink) {
-      fs.writeFileSync(this.file, buffer, { flush: true });
+      fs.writeFileSync(this.file, buffer, WRITE_OPTIONS);
       return;
     }
 
-    const temp = `${this.file}.tmp`;
-    fs.writeFileSync(temp, buffer, { flush: true });
+    const temp = tempPath(this.file);
+    fs.writeFileSync(temp, buffer, WRITE_OPTIONS);
 
     for (let attempt = 0; attempt < RENAME_MAX_ATTEMPTS; attempt++) {
       try {
@@ -762,7 +923,7 @@ export default class IniFileCache {
       }
     }
 
-    fs.writeFileSync(this.file, buffer, { flush: true });
+    fs.writeFileSync(this.file, buffer, WRITE_OPTIONS);
     try {
       fs.unlinkSync(temp);
     } catch {
@@ -837,7 +998,7 @@ export default class IniFileCache {
     } catch (error) {
       failure = error;
       try {
-        fs.unlinkSync(`${this.file}.tmp`);
+        fs.unlinkSync(tempPath(this.file));
       } catch {
         // Nothing to clean up.
       }
@@ -848,7 +1009,7 @@ export default class IniFileCache {
     // Emitted outside the try so that a throwing listener cannot be mistaken for a
     // failed write.
     if (failure !== null) {
-      this.emitEvent("error", failure);
+      this.emitEvent("error", toError(failure));
       return false;
     }
     this.emitEvent("save", this.file);
@@ -878,7 +1039,7 @@ export default class IniFileCache {
     return this.watching !== null;
   }
 
-  watch() {
+  watch(): void {
     if (this.watching) {
       return;
     }
@@ -886,12 +1047,22 @@ export default class IniFileCache {
     // Watch the containing directory rather than the file itself: an atomic save
     // (ours or an external editor's) replaces the file, which silently kills a
     // watcher bound to the old file.
-    const directory = path.dirname(this.file);
+    this.unmatchedEvents = 0;
     try {
-      this.watching = fs.watch(directory, (_event: string, filename: string | Buffer | null) => {
+      this.watching = fs.watch(this.directory, (_event: string, filename: string | Buffer | null) => {
         if (filename !== null && filename !== undefined && !this.matchesFile(filename)) {
+          // Deleting the watched directory makes Windows deliver events naming the
+          // directory itself, without end and without ever reporting an error or a close.
+          // None of them match, so nothing reloads, but the callback would run tens of
+          // thousands of times a second for the life of the process. Checking every so
+          // often costs one stat per burst and nothing at all on a quiet directory.
+          if (++this.unmatchedEvents >= UNMATCHED_EVENTS_BEFORE_CHECK) {
+            this.unmatchedEvents = 0;
+            this.stopIfDirectoryMissing();
+          }
           return;
         }
+        this.unmatchedEvents = 0;
         this.scheduleReload();
       });
     } catch (error) {
@@ -917,15 +1088,41 @@ export default class IniFileCache {
     return name === this.baseName;
   }
 
-  /** Coalesces the multiple events most platforms emit for a single write. */
+  /**
+   * Closes a watcher whose directory has been removed, since it can never deliver another
+   * usable event: the handle refers to an inode that is gone, and recreating the directory
+   * does not re-attach it. Leaving it open makes isWatching() claim a watcher that cannot
+   * work, and stops watch() from establishing a new one.
+   */
+  private stopIfDirectoryMissing(): void {
+    if (!this.watching || fs.existsSync(this.directory)) {
+      return;
+    }
+    this.unwatch();
+    this.emitEvent("error", new Error(`Stopped watching ${this.file}: ${this.directory} no longer exists`));
+  }
+
+  /**
+   * Coalesces the multiple events most platforms emit for a single write, but only up to
+   * DEBOUNCE_MAX_WAIT_FACTOR times the delay: a file being rewritten faster than the delay
+   * would otherwise restart the timer indefinitely and never be adopted at all.
+   */
   private scheduleReload(): void {
+    const now = Date.now();
+    if (this.debounceStartedAt === null) {
+      this.debounceStartedAt = now;
+    }
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer);
     }
+
+    const remaining = this.debounceDelay * DEBOUNCE_MAX_WAIT_FACTOR - (now - this.debounceStartedAt);
+    const wait = remaining <= 0 ? 0 : Math.min(this.debounceDelay, remaining);
     this.debounceTimer = setTimeout(() => {
       this.debounceTimer = null;
+      this.debounceStartedAt = null;
       void this.handleChange();
-    }, this.debounceDelay);
+    }, wait);
 
     if (typeof (this.debounceTimer as any)?.unref === "function") {
       (this.debounceTimer as any).unref();
@@ -934,53 +1131,35 @@ export default class IniFileCache {
 
   private async handleChange(): Promise<void> {
     try {
-      for (let attempt = 0; attempt < READ_MAX_ATTEMPTS; attempt++) {
-        // Re-checked every attempt: unwatch() may have been called, or a save may have
-        // made the file ours, while this loop was waiting.
-        if (!this.watching || this.isOwnLastWrite()) {
-          return;
-        }
-
-        let contents: string | null;
-        try {
-          contents = this.readFileContents();
-        } catch (error) {
-          if (attempt === READ_MAX_ATTEMPTS - 1) {
-            this.emitEvent("error", new Error(`Failed to read file after ${READ_MAX_ATTEMPTS} attempts: ${error}`));
-            return;
-          }
-          await delay(READ_RETRY_DELAY);
-          continue;
-        }
-
-        if (contents === null) {
-          // Too large to read; already reported.
-          return;
-        }
-
-        // The file is the source of truth: adopting it discards unsaved in-memory edits,
-        // which is the point of a cache that follows the file.
-        const parsed = this.parseContents(contents);
-        if (!this.watching || !parsed) {
-          // A rejected parse leaves the cache as it was, so there is no change to report;
-          // the failure has already gone out as an error.
-          return;
-        }
-        this.emitEvent("change", this.baseName);
+      // The guard is re-checked before every attempt: unwatch() may have been called, or a
+      // save may have made the file ours, while the read was waiting to be retried.
+      const read = await this.readWithRetries(() => this.watching !== null && !this.isOwnLastWrite());
+      if (read === null) {
         return;
       }
+
+      // The file is the source of truth: adopting it discards unsaved in-memory edits,
+      // which is the point of a cache that follows the file.
+      const parsed = this.parse(read.contents, read);
+      if (!this.watching || !parsed) {
+        // A rejected parse leaves the cache as it was, so there is no change to report;
+        // the failure has already gone out as an error.
+        return;
+      }
+      this.emitEvent("change", this.baseName);
     } catch (error) {
       // Nothing may escape here: this runs detached from any caller, so an exception
       // would surface as an unhandled rejection and terminate the process.
-      this.emitEvent("error", error);
+      this.emitEvent("error", toError(error));
     }
   }
 
-  unwatch() {
+  unwatch(): void {
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer);
       this.debounceTimer = null;
     }
+    this.debounceStartedAt = null;
     if (!this.watching) {
       return;
     }

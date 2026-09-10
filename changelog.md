@@ -5,6 +5,83 @@ All notable changes to `@mdaemon/ini-file-cache` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0]
+
+### Fixed
+
+- **A deleted watch directory no longer spins a CPU core.** The watcher watches the
+  containing directory and filters events by file name. When that directory is deleted,
+  Windows delivers an unending stream of events naming the directory itself — measured at
+  about 35,000 per second, with no `error` and no `close` — and every one of them was
+  filtered and discarded, forever. An uninstaller or a cleanup job removing the config
+  directory left a long-running service burning a core for the rest of its life. The
+  watcher now notices that its directory is gone, closes itself and emits an `error`
+  saying so, in about 16 ms. `isWatching()` reports `false` afterwards instead of claiming
+  a watcher that can never deliver another event, and `watch()` can establish a new one.
+- **`acquireLock` no longer removes a lock it does not own.** A failure to open the lock
+  file was treated as proof that the lock was ours and left over from a failed stamp, and
+  the lock was deleted whenever one existed. But an exclusive open fails with `EEXIST`
+  only when someone holds the lock; it also fails for reasons that say nothing about
+  ownership — a descriptor limit (`EMFILE`) is the realistic one for a service using
+  synchronous file handles. In that case another writer's lock was deleted while they were
+  mid-write, letting a third writer in alongside them. The lock is now removed only when
+  this writer created it.
+- **A literal `[]` header is no longer dropped when bare keys precede it.** The header was
+  recorded only when it created the nameless section, so in a file whose leading keys had
+  already created it, the `[]` line was lost on the next save. The keys survived, but the
+  file did not round-trip.
+- **Content passed to `parseContents` clears a lossy read.** `save()` refuses after a file
+  fails to decode losslessly, so that writing it back cannot destroy bytes the library
+  never touched. That flag was only ever cleared by another successful read, so an instance
+  that had read one such file stayed unsaveable for the rest of its life — even after
+  `parseContents` had replaced every setting with content the caller supplied. It is now
+  cleared when the cache is replaced by content that did not come from the file, and still
+  set when it did.
+- **A continuously rewritten file is adopted again.** The debounce timer restarted on every
+  change event, so a file written more often than `debounceDelay` never settled and the
+  cache silently stopped following it for as long as the writing continued. The wait is now
+  capped at ten times the delay.
+- **The read size limit cannot be bypassed by a growing file.** The size was taken with a
+  `stat` on the path and the content then read by a second call, so a file that grew in
+  between was read in full. The file is now measured and read through a single descriptor,
+  and the limit is checked again against what was actually read.
+- **Listener exceptions are reported again under `@mdaemon/emitter` v3.** That release
+  catches a handler's exception internally and routes it to an `onError` hook rather than
+  letting it propagate out of `emit()`, so the library's own `try`/`catch` never saw one:
+  every listener exception became a `console.error` that no consumer could subscribe to.
+  The hook is now supplied, restoring the `error` event. One handler throwing no longer
+  prevents the rest of that event's handlers from running.
+
+### Added
+
+- **`on` and `once` accept a namespace.** The emitter has always supported one and `off`
+  already took it, but the declared overloads did not, so the namespaced form did not
+  compile for a TypeScript consumer. Registering under a namespace matters more than it
+  looks: handlers registered without one share a single default namespace, and `off(event)`
+  removes every handler in the namespace it is given — so one module unsubscribing with
+  `off("change")` silently removed the `change` handlers of every other module that had
+  also subscribed without a namespace. The readme now documents this and shows the
+  namespaced form throughout.
+
+### Changed
+
+- The `error` event always carries an `Error`. A value thrown that was not one — from a
+  listener, or out of a write — was previously passed through as-is, contradicting the
+  declared handler signature.
+- `IIniFileCacheListener` declares `change` separately from `reload` and `save`. All three
+  take a string, but `change` receives the file's base name while the other two receive the
+  absolute path, which the shared `filePath` parameter name obscured.
+
+### Internal
+
+- The byte order mark found by a read is passed to the parse as an argument rather than
+  through a field consumed by whichever parse ran next.
+- One retry loop, one section-and-index constructor, one temp-path helper and one
+  line-break pattern, each of which previously existed in two places.
+- Path resolution, containment and file creation are extracted from the constructor.
+- `noUnusedLocals` and `noUnusedParameters` are enabled; two dead locals in the parser
+  were removed.
+
 ## [2.2.0] - 2026-08-19
 
 ### Added

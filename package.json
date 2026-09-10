@@ -52,7 +52,7 @@
     "typescript": "^5.8.3"
   },
   "dependencies": {
-    "@mdaemon/emitter": "^2.1.0"
+    "@mdaemon/emitter": "^3.0.0"
   },
   "files": [
     "dist",

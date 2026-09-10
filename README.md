@@ -79,13 +79,17 @@ iniCache.removeSection("section");
 // Reload the file from disk
 await iniCache.reload();
 
-iniCache.listener.on("change", (filename) => { });
+// Subscribe under a namespace of your own, so that another part of the
+// application calling off() cannot remove your handlers along with its own.
+iniCache.listener.on("change", "myModule", (fileName) => { });
 
-iniCache.listener.on("error", (error) => { });
+iniCache.listener.on("error", "myModule", (error) => { });
 
-iniCache.listener.on("reload", (filePath) => { });
+iniCache.listener.on("reload", "myModule", (filePath) => { });
 
-iniCache.listener.on("save", (filePath) => { });
+iniCache.listener.on("save", "myModule", (filePath) => { });
+
+iniCache.listener.off("change", "myModule");
 
 ```
 
@@ -146,10 +150,19 @@ library supports, with the handler signature of each event:
 import IniFileCache, { IIniFileCacheListener, IIniFileCacheOptions } from "@mdaemon/ini-file-cache";
 
 const listener: IIniFileCacheListener = iniCache.listener;
-listener.on("change", (filename) => { });  // filename: string
-listener.on("error", (error) => { });      // error: Error
-listener.off("change");
+listener.on("change", "myModule", (fileName) => { });  // fileName: the file's base name
+listener.on("reload", "myModule", (filePath) => { });  // filePath: the absolute path
+listener.on("error", "myModule", (error) => { });      // error: Error
+listener.off("change", "myModule");
 ```
+
+The namespace is optional, but see [Namespaces](#namespaces) below — leaving it off has a
+consequence that is easy to miss.
+
+An exception thrown by one of your handlers is caught and re-emitted as an `error` event
+rather than escaping into the library, and it does not stop the remaining handlers for
+that event from running. An exception thrown by an `error` handler is discarded, since
+reporting it through the same event would loop.
 
 ### Reading Settings ###
 
@@ -415,8 +428,11 @@ iniCache.unwatch();
 
 #### `isWatching(): boolean` ####
 
-True while a watcher is active on the file, false after `unwatch()` or when `watch()`
-failed to create the watcher.
+True while a watcher is active on the file, false after `unwatch()`, when `watch()`
+failed to create the watcher, or once the containing directory has been deleted. A
+watcher cannot survive its directory being removed — the handle refers to an inode that
+is gone, and recreating the directory does not re-attach it — so the watcher is closed
+and an `error` event explains why. Call `watch()` again to start a new one.
 
 ```javascript
 if (!iniCache.isWatching()) {
@@ -464,12 +480,48 @@ Subscribe through the `listener` property.
 | `close` | none | The file watcher closed |
 
 ```javascript
-iniCache.listener.on("change", (filename) => { });
-iniCache.listener.on("reload", (filePath) => { });
-iniCache.listener.on("save", (filePath) => { });
-iniCache.listener.on("error", (error) => { });
-iniCache.listener.on("close", () => { });
+iniCache.listener.on("change", "myModule", (fileName) => { });
+iniCache.listener.on("reload", "myModule", (filePath) => { });
+iniCache.listener.on("save", "myModule", (filePath) => { });
+iniCache.listener.on("error", "myModule", (error) => { });
+iniCache.listener.on("close", "myModule", () => { });
 ```
+
+#### Namespaces ####
+
+`on` and `once` take an optional namespace between the event name and the handler, and
+`off` takes one as its second argument. **Prefer the namespaced form.**
+
+A handler registered without a namespace is filed under a single shared default one, and
+`off(event)` removes every handler in the namespace it is given. So an un-namespaced
+`off` removes not just your own handlers but every handler that any other part of the
+application registered without a namespace:
+
+```javascript
+// module A
+iniCache.listener.on("change", () => reloadRoutes());
+// module B
+iniCache.listener.on("change", () => refreshCache());
+
+iniCache.listener.off("change");  // module B tidying up after itself
+// module A's handler is gone too, silently. Neither will fire again.
+```
+
+Give each subscriber its own namespace and the problem disappears — an `off` in one
+module cannot reach another module's handlers, and each unsubscribes only what it
+registered:
+
+```javascript
+// module A
+iniCache.listener.on("change", "routes", () => reloadRoutes());
+// module B
+iniCache.listener.on("change", "cache", () => refreshCache());
+
+iniCache.listener.off("change", "cache");  // removes module B's handler only
+```
+
+`off(event)` with no namespace is still the right call when you want to clear the plain,
+un-namespaced subscriptions and you know yours are the only ones.
 
 An exception thrown by one of your listeners is caught and re-emitted as `error`
 rather than propagating. A listener cannot, for example, make a successful `save()`

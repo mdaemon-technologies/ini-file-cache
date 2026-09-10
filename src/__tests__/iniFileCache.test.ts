@@ -242,6 +242,22 @@ describe('parseContents', () => {
     expect(read('empty-header.ini')).toBe('[]\nk=v\n\n[S]\nx=1\n\n');
   });
 
+  test('preserves a literal "[]" header that follows leading bare keys', async () => {
+    // The bare keys create the nameless section first, so the later "[]" header finds it
+    // already in the index. Missing that is how the header came to be dropped on save.
+    const cache = create('empty-header-late.ini', 'k=v\n[]\nj=w\n[S]\nx=1\n');
+    expect(cache.getSections()).toEqual(['', 'S']);
+    expect(cache.getKeys('')).toEqual(['k', 'j']);
+
+    await cache.save();
+    expect(read('empty-header-late.ini')).toBe('[]\nk=v\nj=w\n\n[S]\nx=1\n\n');
+
+    // And the result is stable: a second round trip changes nothing further.
+    await cache.reload();
+    await cache.save();
+    expect(read('empty-header-late.ini')).toBe('[]\nk=v\nj=w\n\n[S]\nx=1\n\n');
+  });
+
   test('writes a "[]" header when the nameless section is not first', async () => {
     const cache = create('nameless-late.ini', '[S]\nx=1\n');
     cache.setSetting('', 'global', 'g');
@@ -532,6 +548,46 @@ describe('encoding', () => {
     expect(errors.map((e) => e.message)).toContainEqual(expect.stringContaining('Refusing to save'));
     // The original bytes are untouched.
     expect(fs.readFileSync(path.join(dir, 'mojibake.ini')).equals(latin1Bytes)).toBe(true);
+  });
+
+  test('replacing the cache through parseContents clears a lossy read', async () => {
+    // The refusal protects bytes the library never touched. Content handed in directly
+    // replaces every one of them, so there is nothing left to protect — and without this
+    // the instance stays unsaveable for the rest of its life, with no way to recover
+    // short of constructing a new one.
+    fs.writeFileSync(path.join(dir, 'lossy-parsed.ini'), latin1Bytes);
+    const cache = new IniFileCache(dir, 'lossy-parsed.ini');
+    instances.push(cache);
+    cache.unwatch();
+    const errors = collectErrors(cache);
+    await wait(30);
+    expect(await cache.save()).toBe(false);
+
+    expect(cache.parseContents('[S]\nk=clean\n')).toBe(true);
+    expect(await cache.save()).toBe(true);
+    expect(read('lossy-parsed.ini')).toBe('[S]\nk=clean\n\n');
+    // The decode was reported, and so was the save it blocked — but only the one that
+    // happened before the cache was replaced.
+    expect(errors.map((e) => e.message)).toEqual([
+      expect.stringContaining('is not valid utf8'),
+      expect.stringContaining('Refusing to save'),
+    ]);
+  });
+
+  test('a lossy read still blocks a save when the cache came from that file', async () => {
+    // The counterpart to the test above: the guard must survive the refactor that made a
+    // direct parseContents clear it.
+    fs.writeFileSync(path.join(dir, 'lossy-reload.ini'), latin1Bytes);
+    const cache = new IniFileCache(dir, 'lossy-reload.ini');
+    instances.push(cache);
+    cache.unwatch();
+    collectErrors(cache);
+    await wait(30);
+
+    expect(await cache.reload()).toBe(true);
+    cache.setSetting('S', 'k', 'v');
+    expect(await cache.save()).toBe(false);
+    expect(fs.readFileSync(path.join(dir, 'lossy-reload.ini')).equals(latin1Bytes)).toBe(true);
   });
 
   test('a valid UTF-8 file is never treated as lossy', async () => {
@@ -1427,6 +1483,50 @@ describe('save', () => {
     fs.unlinkSync(lock);
   }, 15000);
 
+  test('does not remove a foreign lock when the lock file cannot be opened', async () => {
+    // An exclusive open fails with EEXIST when someone holds the lock, but it can also
+    // fail for reasons that say nothing about ownership — a descriptor limit is the
+    // realistic one for a service using synchronous file handles. Treating those the same
+    // way deletes a lock this writer never held, letting a third writer in alongside the
+    // one that actually owns it.
+    const cache = create('emfile-lock.ini', '[S]\nk=1\n');
+    cache.unwatch();
+    const errors = collectErrors(cache);
+    const lock = path.join(dir, 'emfile-lock.ini.lck');
+    fs.writeFileSync(lock, 'another-writers-token');
+
+    // A descriptor limit cannot be provoked reliably, so it is injected for exactly one
+    // call on the fs module itself. Everything else in this test uses the real filesystem.
+    const fsModule = jest.requireActual<typeof fs>('fs');
+    const realOpenSync = fsModule.openSync;
+    let injected = false;
+    fsModule.openSync = ((...args: unknown[]) => {
+      // Scoped to the lock file rather than to "the next call", so that a read opening a
+      // descriptor elsewhere cannot absorb the injection and quietly void this test.
+      if (!injected && String(args[0]).endsWith('.lck')) {
+        injected = true;
+        throw Object.assign(new Error('EMFILE: too many open files'), { code: 'EMFILE' });
+      }
+      return (realOpenSync as (...a: unknown[]) => number)(...args);
+    }) as typeof fs.openSync;
+
+    try {
+      cache.setSetting('S', 'k', '2');
+      expect(await cache.save()).toBe(false);
+    } finally {
+      fsModule.openSync = realOpenSync;
+    }
+    expect(injected).toBe(true);
+
+    expect(fs.existsSync(lock)).toBe(true);
+    expect(fs.readFileSync(lock, 'utf8')).toBe('another-writers-token');
+    expect(errors.map((e) => e.message)).toEqual([expect.stringContaining('Failed to acquire the lock')]);
+    // The file itself is untouched, since the write never happened.
+    expect(read('emfile-lock.ini')).toBe('[S]\nk=1\n');
+
+    fs.unlinkSync(lock);
+  }, 15000);
+
   test('succeeds while another process holds the file open for reading', async () => {
     const cache = create('held-open.ini', '[S]\nk=1\n');
     const handle = fs.openSync(path.join(dir, 'held-open.ini'), 'r');
@@ -1822,6 +1922,93 @@ describe('watch and unwatch', () => {
     expect(cache.getSetting('S', 'k')).toBe('2');
   }, 15000);
 
+  test('a listener exception is reported through error rather than to the console', async () => {
+    // The emitter catches a handler's exception itself and hands it to the onError hook
+    // this library installs; its default hook writes to the console instead. A dependency
+    // upgrade that changes either would silently turn every listener exception into
+    // console noise that no consumer can subscribe to.
+    const cache = create('listener-console.ini', '');
+    const errors = collectErrors(cache);
+    const logged: unknown[] = [];
+    const consoleError = jest.spyOn(console, 'error').mockImplementation((...args) => {
+      logged.push(args);
+    });
+
+    try {
+      cache.listener.on('save', () => {
+        throw new Error('first listener blew up');
+      });
+      // A second listener for the same event: the exception must not prevent it running.
+      let secondRan = false;
+      cache.listener.on('save', () => {
+        secondRan = true;
+      });
+
+      expect(await cache.save()).toBe(true);
+      await settle();
+
+      expect(errors.map((e) => e.message)).toEqual(['first listener blew up']);
+      expect(secondRan).toBe(true);
+      expect(logged).toEqual([]);
+    } finally {
+      consoleError.mockRestore();
+    }
+  }, 15000);
+
+  test('a namespaced subscription survives another part of the application unsubscribing', async () => {
+    // Handlers registered without a namespace all land in one shared default namespace, and
+    // off() removes every handler in the namespace it is given. So one module tidying up
+    // after itself with off("save") silently deafens every other module that subscribed the
+    // plain way. Registering under a namespace is what makes a subscription your own.
+    const cache = create('namespaced.ini', '[S]\nk=1\n');
+    cache.unwatch();
+
+    const plain: string[] = [];
+    const mine: string[] = [];
+    cache.listener.on('save', () => plain.push('plain'));
+    cache.listener.on('save', 'myModule', () => mine.push('mine'));
+
+    expect(await cache.save()).toBe(true);
+    expect(plain).toHaveLength(1);
+    expect(mine).toHaveLength(1);
+
+    // Another part of the application unsubscribes without naming a namespace.
+    cache.listener.off('save');
+
+    expect(await cache.save()).toBe(true);
+    expect(plain).toHaveLength(1);
+    expect(mine).toHaveLength(2);
+
+    // And the namespaced one goes away only when its own namespace is named.
+    cache.listener.off('save', 'myModule');
+    expect(await cache.save()).toBe(true);
+    expect(mine).toHaveLength(2);
+  }, 15000);
+
+  test('a throwing error listener is swallowed rather than looping', async () => {
+    const cache = create('throwing-error.ini', '');
+    const consoleError = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      let calls = 0;
+      cache.listener.on('error', () => {
+        calls += 1;
+        throw new Error('error listener blew up');
+      });
+
+      // Refused because the cache has never parsed a file with content in it.
+      cache.listener.on('save', () => {
+        throw new Error('save listener blew up');
+      });
+      await cache.save();
+      await settle();
+
+      // Reported once: re-reporting an error listener's own failure would recurse.
+      expect(calls).toBe(1);
+    } finally {
+      consoleError.mockRestore();
+    }
+  }, 15000);
+
   test('watch resumes after unwatch', async () => {
     const cache = create('rewatch.ini', '[S]\nk=1\n');
     cache.unwatch();
@@ -1918,6 +2105,50 @@ describe('watch and unwatch', () => {
 
     expect(cache.getSetting('S', 'k')).toBe('2');
   }, 15000);
+
+  test('a continuously rewritten file is still adopted', async () => {
+    // Restarting the debounce timer on every event means a file written faster than the
+    // delay never settles, and the cache silently stops following it for as long as the
+    // writing continues — a logger or a process writing in a loop does exactly this.
+    const cache = create('busy-writer.ini', '[S]\nk=0\n', { debounceDelay: 100 });
+    const changes: string[] = [];
+    cache.listener.on('change', () => changes.push('change'));
+
+    let n = 0;
+    const writer = setInterval(() => {
+      n += 1;
+      fs.writeFileSync(path.join(dir, 'busy-writer.ini'), `[S]\nk=${n}\n`);
+    }, 30);
+
+    try {
+      await waitFor(() => changes.length > 0, 8000);
+    } finally {
+      clearInterval(writer);
+    }
+
+    expect(changes.length).toBeGreaterThan(0);
+  }, 20000);
+
+  test('stops watching when the containing directory is deleted', async () => {
+    // A watcher bound to a deleted directory can never recover: the handle refers to an
+    // inode that is gone, and recreating the directory does not re-attach it. On Windows
+    // it is worse than useless — libuv delivers tens of thousands of events per second
+    // naming the directory itself, forever, which the filename filter discards one by one.
+    const sub = path.join(dir, 'watched-away');
+    fs.mkdirSync(sub);
+    fs.writeFileSync(path.join(sub, 'gone.ini'), '[S]\nk=1\n');
+    const cache = new IniFileCache(sub, 'gone.ini');
+    instances.push(cache);
+    const errors = collectErrors(cache);
+    expect(cache.isWatching()).toBe(true);
+
+    fs.rmSync(sub, { recursive: true, force: true });
+
+    await waitFor(() => !cache.isWatching(), 10000);
+    expect(errors.some((e) => /no longer exists/.test(e.message))).toBe(true);
+    // The cache keeps what it last understood; only the watching stopped.
+    expect(cache.getSetting('S', 'k')).toBe('1');
+  }, 20000);
 
   test('isWatching follows the watcher', () => {
     const cache = create('is-watching.ini', '[S]\nk=1\n');
