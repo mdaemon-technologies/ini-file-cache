@@ -1,33 +1,48 @@
-[![Dynamic JSON Badge](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fmdaemon-technologies%2Fini-file-cache%2Fmain%2Fpackage.json&query=%24.version&prefix=v&label=npm&color=blue)](https://www.npmjs.com/package/@mdaemon/ini-file-cache) [![Static Badge](https://img.shields.io/badge/node-v16%2B-blue?style=flat&label=node&color=blue)](https://nodejs.org) [![install size](https://packagephobia.com/badge?p=@mdaemon/ini-file-cache)](https://packagephobia.com/result?p=@mdaemon/ini-file-cache) [![Dynamic JSON Badge](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fmdaemon-technologies%2Fini-file-cache%2Fmain%2Fpackage.json&query=%24.license&prefix=v&label=license&color=green)](https://github.com/mdaemon-technologies/ini-file-cache/blob/main/LICENSE) [![Node.js CI](https://github.com/mdaemon-technologies/ini-file-cache/actions/workflows/node.js.yml/badge.svg)](https://github.com/mdaemon-technologies/ini-file-cache/actions/workflows/node.js.yml)
+# @mdaemon/ini-file-cache
 
-# @mdaemon/ini-file-cache, A library for reading, writing, and watching ini files for changes
+[![npm](https://img.shields.io/npm/v/@mdaemon/ini-file-cache?color=blue)](https://www.npmjs.com/package/@mdaemon/ini-file-cache)
+[![license](https://img.shields.io/npm/l/@mdaemon/ini-file-cache?color=green)](LICENSE)
+[![node](https://img.shields.io/node/v/@mdaemon/ini-file-cache)](https://nodejs.org)
+[![install size](https://packagephobia.com/badge?p=@mdaemon/ini-file-cache)](https://packagephobia.com/result?p=@mdaemon/ini-file-cache)
+[![CI](https://github.com/mdaemon-technologies/ini-file-cache/actions/workflows/node.js.yml/badge.svg)](https://github.com/mdaemon-technologies/ini-file-cache/actions/workflows/node.js.yml)
 
- Not applicable to a browser context.
+A library for reading, writing, and watching ini files for changes
 
-# Install #
+Not applicable to a browser context.
 
-    $ npm install @mdaemon/ini-file-cache --save
+## Install
 
-# Node CommonJS #
-```javascript
-   const IniFileCache = require("@mdaemon/ini-file-cache");
+```bash
+npm install @mdaemon/ini-file-cache
 ```
-# Node Modules #
-```javascript
-   import IniFileCache from "@mdaemon/ini-file-cache";
+
+## Usage
+
+### ES modules
+
+```js
+import IniFileCache from "@mdaemon/ini-file-cache";
 ```
-# TypeScript #
+
+### CommonJS
+
+```js
+const IniFileCache = require("@mdaemon/ini-file-cache");
+```
+
+### TypeScript
 
 Types ship with the package and are resolved for both entry points, so `import` and
 `require` are each typed correctly under `node16`, `nodenext`, `bundler` and classic
 `node` module resolution. `require()` returns the class itself, not a module namespace.
 
-```typescript
-   import IniFileCache, { IIniFileCacheOptions, IIniFileCacheListener } from "@mdaemon/ini-file-cache";
+```ts
+import IniFileCache, { IIniFileCacheOptions, IIniFileCacheListener } from "@mdaemon/ini-file-cache";
 ```
-### IniFileCache ###
 
-```javascript
+### IniFileCache
+
+```js
 // Create a new IniFileCache instance
 const iniCache = new IniFileCache("/path/to/file/", "config.ini");
 
@@ -93,11 +108,11 @@ iniCache.listener.off("change", "myModule");
 
 ```
 
-## API ##
+## API
 
-### Constructor ###
+### Constructor
 
-#### `new IniFileCache(cachePath: string, fileName: string, options?: IIniFileCacheOptions)` ####
+#### `new IniFileCache(cachePath: string, fileName: string, options?: IIniFileCacheOptions)`
 
 Creates a new instance for the ini file located at `cachePath` / `fileName`. The
 directory is created recursively if it does not exist, and an empty file is created
@@ -112,7 +127,7 @@ be an absolute path — the two arguments are simply joined and resolved. An emp
 If `fileName` comes from somewhere untrusted, set `restrictToCachePath: true` to
 require the resolved path to stay inside `cachePath`.
 
-```javascript
+```js
 const iniCache = new IniFileCache("/etc/myapp/", "config.ini");
 
 const caseInsensitiveCache = new IniFileCache("/etc/myapp/", "config.ini", {
@@ -122,7 +137,7 @@ const caseInsensitiveCache = new IniFileCache("/etc/myapp/", "config.ini", {
 });
 ```
 
-#### `IIniFileCacheOptions` ####
+#### `IIniFileCacheOptions`
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -137,16 +152,16 @@ Each option is validated: `maxFileSize` must be a finite number of at least 1 an
 disable the size limit. `Infinity` is rejected for the same reason — pass an explicit
 large number to effectively remove the cap.
 
-### Properties ###
+### Properties
 
-#### `listener: IIniFileCacheListener` ####
+#### `listener: IIniFileCacheListener`
 
 Read-only accessor that returns the internal [`@mdaemon/emitter`](https://www.npmjs.com/package/@mdaemon/emitter)
 instance used to emit `change`, `error`, `reload`, `save`, and `close` events. It is typed
 as `IIniFileCacheListener`, which declares the `on`, `once`, `off` and `emit` methods this
 library supports, with the handler signature of each event:
 
-```typescript
+```ts
 import IniFileCache, { IIniFileCacheListener, IIniFileCacheOptions } from "@mdaemon/ini-file-cache";
 
 const listener: IIniFileCacheListener = iniCache.listener;
@@ -164,34 +179,34 @@ rather than escaping into the library, and it does not stop the remaining handle
 that event from running. An exception thrown by an `error` handler is discarded, since
 reporting it through the same event would loop.
 
-### Reading Settings ###
+### Reading Settings
 
-#### `getSetting(section: string, key: string, defaultValue?: string | null): string | null` ####
+#### `getSetting(section: string, key: string, defaultValue?: string | null): string | null`
 
 Returns the cached string value for `key` in `section`. If the section or the key
 does not exist, `defaultValue` is returned, which defaults to `null`.
 
-```javascript
+```js
 const host = iniCache.getSetting("Server", "Host", "localhost");
 const missing = iniCache.getSetting("Server", "NotThere"); // null
 const empty = iniCache.getSetting("Server", "NotThere", ""); // ""
 ```
 
-#### `getBool(section: string, key: string, defaultValue?: boolean): boolean` ####
+#### `getBool(section: string, key: string, defaultValue?: boolean): boolean`
 
 Returns the value for `key` interpreted as a boolean. `t`, `true`, `y`, `yes`, `on`
 and `1` are `true`; `f`, `false`, `n`, `no`, `off` and `0` are `false`. Matching is
 case-insensitive. If the setting is missing, empty, or is not one of those values,
 `defaultValue` is returned (defaults to `false`).
 
-```javascript
+```js
 // [Server]
 // Enabled=Yes
 const enabled = iniCache.getBool("Server", "Enabled"); // true
 const debug = iniCache.getBool("Server", "Debug", true); // true (not set)
 ```
 
-#### `getInt(section: string, key: string, defaultValue?: number): number` ####
+#### `getInt(section: string, key: string, defaultValue?: number): number`
 
 Returns the value for `key` parsed as a base-10 integer. The value must be digits
 with an optional leading sign, and must be a safe integer. Anything else — a missing
@@ -199,7 +214,7 @@ or empty setting, a decimal, a hex literal, trailing characters, or a magnitude
 beyond `Number.MAX_SAFE_INTEGER` — returns `defaultValue` (defaults to `0`) rather
 than a partially parsed number.
 
-```javascript
+```js
 // [Server]
 // Port=8080
 const port = iniCache.getInt("Server", "Port", 25); // 8080
@@ -208,41 +223,41 @@ const timeout = iniCache.getInt("Server", "Timeout", 30); // 30 (not set)
 // "123abc", "12.34" and "0x10" all return the default, not 123, 12 or 0.
 ```
 
-#### `getSections(): string[]` ####
+#### `getSections(): string[]`
 
 Returns the names of all cached sections.
 
-```javascript
+```js
 const sections = iniCache.getSections(); // ["Server", "Logging"]
 ```
 
-#### `getKeys(section: string): string[]` ####
+#### `getKeys(section: string): string[]`
 
 Returns the keys within `section`, or an empty array if the section does not exist.
 
-```javascript
+```js
 const keys = iniCache.getKeys("Server"); // ["Host", "Port"]
 ```
 
-#### `hasSection(section: string): boolean` ####
+#### `hasSection(section: string): boolean`
 
 Returns `true` if the section exists in the cache.
 
-```javascript
+```js
 if (iniCache.hasSection("Logging")) { }
 ```
 
-#### `hasKey(section: string, key: string): boolean` ####
+#### `hasKey(section: string, key: string): boolean`
 
 Returns `true` if `key` exists within `section`.
 
-```javascript
+```js
 if (iniCache.hasKey("Server", "Port")) { }
 ```
 
-### Writing Settings ###
+### Writing Settings
 
-#### `setSetting(section: string, key: string, value: string): void` ####
+#### `setSetting(section: string, key: string, value: string): void`
 
 Sets `key` to `value` in the cache, creating the section and/or key if needed.
 This only updates the in-memory cache — call `save()` to persist the change.
@@ -265,7 +280,7 @@ allowed, as are comment characters anywhere in a section name. Without this vali
 a value such as `"bob\nAdmin=true"` would forge an extra setting on the next read, so
 validate or catch when storing untrusted input.
 
-```javascript
+```js
 iniCache.setSetting("Server", "Port", "8080");
 await iniCache.save();
 
@@ -276,25 +291,25 @@ try {
 }
 ```
 
-#### `removeKey(section: string, key: string): void` ####
+#### `removeKey(section: string, key: string): void`
 
 Removes `key` from `section` in the cache. Does nothing if either does not exist.
 Call `save()` to persist the change.
 
-```javascript
+```js
 iniCache.removeKey("Server", "Port");
 ```
 
-#### `removeSection(section: string): void` ####
+#### `removeSection(section: string): void`
 
 Removes the entire section, including all of its keys, from the cache. Call
 `save()` to persist the change.
 
-```javascript
+```js
 iniCache.removeSection("Logging");
 ```
 
-#### `save(): Promise<boolean>` ####
+#### `save(): Promise<boolean>`
 
 Serializes the cached sections back to ini format and writes them to the file.
 Resolves `true` when the file was written and `false` otherwise, and emits `save`
@@ -326,15 +341,15 @@ link with a regular file.
 If the file could not be decoded losslessly with the configured `encoding`, `save()`
 emits `error` and resolves `false` instead of writing — see **Encoding** below.
 
-```javascript
+```js
 if (!await iniCache.save()) {
   // the file was not written
 }
 ```
 
-### Loading and Parsing ###
+### Loading and Parsing
 
-#### `cacheFileSettings(): Promise<boolean>` ####
+#### `cacheFileSettings(): Promise<boolean>`
 
 Reads the file from disk and refreshes the in-memory cache, retrying up to 20 times
 at 100 ms intervals on read failure. Resolves `true` when the file was both read and
@@ -342,24 +357,24 @@ parsed. Emits `error` and resolves `false` if the file cannot be read, is larger
 `maxFileSize`, or does not parse — leaving the cached settings untouched in every case.
 Always resolves; it never rejects. Called automatically by `reload()` and the watcher.
 
-```javascript
+```js
 await iniCache.cacheFileSettings();
 ```
 
-#### `reload(): Promise<boolean>` ####
+#### `reload(): Promise<boolean>`
 
 Re-reads the file from disk (via `cacheFileSettings()`). Resolves `true` and emits
 `reload` with the file path when the cache was refreshed; resolves `false` without
 emitting `reload` when the file could not be read or did not parse, in which case the
 cached settings are unchanged and an `error` has already been emitted.
 
-```javascript
+```js
 if (!await iniCache.reload()) {
   // the cache still holds the previous settings
 }
 ```
 
-#### `parseContents(contents: string): boolean` ####
+#### `parseContents(contents: string): boolean`
 
 Parses raw ini text into the in-memory cache, resolving `true` when the content was
 accepted and `false` when it was rejected and an `error` emitted:
@@ -394,13 +409,13 @@ write that emptiness to disk.
 
 An empty file, or one containing only comments, is valid and yields no sections.
 
-```javascript
+```js
 iniCache.parseContents("[Server]\nPort=8080\n");
 ```
 
-### Watching ###
+### Watching
 
-#### `watch(): void` ####
+#### `watch(): void`
 
 Begins watching for changes to the file. Called automatically by the constructor, and
 a no-op while already watching. When the file changes the cache is refreshed and a
@@ -413,20 +428,20 @@ The containing directory is watched rather than the file itself, with events fil
 by filename. A watcher bound directly to a file stops working once that file is
 replaced, which is how most editors — and `save()` — write.
 
-```javascript
+```js
 iniCache.watch();
 ```
 
-#### `unwatch(): void` ####
+#### `unwatch(): void`
 
 Closes the watcher and cancels any pending change. Safe to call more than once. No
 further `change` events are emitted and the file is no longer re-read.
 
-```javascript
+```js
 iniCache.unwatch();
 ```
 
-#### `isWatching(): boolean` ####
+#### `isWatching(): boolean`
 
 True while a watcher is active on the file, false after `unwatch()`, when `watch()`
 failed to create the watcher, or once the containing directory has been deleted. A
@@ -434,13 +449,13 @@ watcher cannot survive its directory being removed — the handle refers to an i
 is gone, and recreating the directory does not re-attach it — so the watcher is closed
 and an `error` event explains why. Call `watch()` again to start a new one.
 
-```javascript
+```js
 if (!iniCache.isWatching()) {
   iniCache.watch();
 }
 ```
 
-### Encoding ###
+### Encoding
 
 Files are read and written as UTF-8 by default. A legacy single-byte file — windows-1252
 or ISO-8859-1 — is **not** valid UTF-8: every high byte decodes to the replacement
@@ -453,21 +468,21 @@ they differ it emits `error` on read, and `save()` refuses to write, so a mis-co
 encoding costs you a failed save rather than a mangled file. Pass the right encoding to
 resolve it:
 
-```javascript
+```js
 const iniCache = new IniFileCache("/etc/myapp/", "legacy.ini", { encoding: "latin1" });
 ```
 
 `latin1` maps every byte one-to-one, so such a file round-trips exactly. Any encoding
 accepted by `Buffer` is valid; an unsupported name throws a `TypeError`.
 
-### Concurrency ###
+### Concurrency
 
 The cache follows the file. When the watched file changes on disk, the new contents
 replace what is in memory — including any `setSetting` you have not saved yet. Code that
 does read-modify-write should `save()` promptly rather than holding unsaved changes
 across an interval where another process might write.
 
-### Events ###
+### Events
 
 Subscribe through the `listener` property.
 
@@ -479,7 +494,7 @@ Subscribe through the `listener` property.
 | `error` | `error: Error` | A read, write, parse, lock, or watch failure occurred |
 | `close` | none | The file watcher closed |
 
-```javascript
+```js
 iniCache.listener.on("change", "myModule", (fileName) => { });
 iniCache.listener.on("reload", "myModule", (filePath) => { });
 iniCache.listener.on("save", "myModule", (filePath) => { });
@@ -487,7 +502,7 @@ iniCache.listener.on("error", "myModule", (error) => { });
 iniCache.listener.on("close", "myModule", () => { });
 ```
 
-#### Namespaces ####
+#### Namespaces
 
 `on` and `once` take an optional namespace between the event name and the handler, and
 `off` takes one as its second argument. **Prefer the namespaced form.**
@@ -497,7 +512,7 @@ A handler registered without a namespace is filed under a single shared default 
 `off` removes not just your own handlers but every handler that any other part of the
 application registered without a namespace:
 
-```javascript
+```js
 // module A
 iniCache.listener.on("change", () => reloadRoutes());
 // module B
@@ -511,7 +526,7 @@ Give each subscriber its own namespace and the problem disappears — an `off` i
 module cannot reach another module's handlers, and each unsubscribes only what it
 registered:
 
-```javascript
+```js
 // module A
 iniCache.listener.on("change", "routes", () => reloadRoutes());
 // module B
@@ -533,17 +548,17 @@ Errors raised while the constructor runs — an unreadable or malformed file, or
 over `maxFileSize` — are emitted asynchronously, so a listener attached immediately
 after `new IniFileCache(...)` still receives them.
 
-# Changelog #
+## Changelog
 
-See [changelog.md](https://github.com/mdaemon-technologies/ini-file-cache/blob/main/changelog.md).
+See [CHANGELOG.md](CHANGELOG.md).
+
 Version 2.1.0 tightens input handling in ways that reject or reinterpret input earlier
 versions accepted — read its notes before upgrading.
 
-# License #
+## License
 
-Published under the [LGPL-2.1 license](https://github.com/mdaemon-technologies/ini-file-cache/blob/main/LICENSE "LGPL-2.1 License").
+Published under the [LGPL-2.1](LICENSE) license.
 
-Published by<br/> 
-<b>MDaemon Technologies, Ltd.<br/>
-Simple Secure Email</b><br/>
+Published by **MDaemon Technologies, Ltd.**  
+Simple Secure Email  
 [https://www.mdaemon.com](https://www.mdaemon.com)

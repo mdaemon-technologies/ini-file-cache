@@ -1,11 +1,41 @@
 # Changelog
 
-All notable changes to `@mdaemon/ini-file-cache` are documented in this file.
+All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [2.3.0] - 2026-09-10
+
+### Added
+
+- **`on` and `once` accept a namespace.** The emitter has always supported one and `off`
+  already took it, but the declared overloads did not, so the namespaced form did not
+  compile for a TypeScript consumer. Registering under a namespace matters more than it
+  looks: handlers registered without one share a single default namespace, and `off(event)`
+  removes every handler in the namespace it is given — so one module unsubscribing with
+  `off("change")` silently removed the `change` handlers of every other module that had
+  also subscribed without a namespace. The readme now documents this and shows the
+  namespaced form throughout.
+
+### Changed
+
+- The `error` event always carries an `Error`. A value thrown that was not one — from a
+  listener, or out of a write — was previously passed through as-is, contradicting the
+  declared handler signature.
+- `IIniFileCacheListener` declares `change` separately from `reload` and `save`. All three
+  take a string, but `change` receives the file's base name while the other two receive the
+  absolute path, which the shared `filePath` parameter name obscured.
+
+
+
+- The byte order mark found by a read is passed to the parse as an argument rather than
+  through a field consumed by whichever parse ran next.
+- One retry loop, one section-and-index constructor, one temp-path helper and one
+  line-break pattern, each of which previously existed in two places.
+- Path resolution, containment and file creation are extracted from the constructor.
+- `noUnusedLocals` and `noUnusedParameters` are enabled; two dead locals in the parser
+  were removed.
 
 ### Fixed
 
@@ -52,36 +82,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The hook is now supplied, restoring the `error` event. One handler throwing no longer
   prevents the rest of that event's handlers from running.
 
-### Added
-
-- **`on` and `once` accept a namespace.** The emitter has always supported one and `off`
-  already took it, but the declared overloads did not, so the namespaced form did not
-  compile for a TypeScript consumer. Registering under a namespace matters more than it
-  looks: handlers registered without one share a single default namespace, and `off(event)`
-  removes every handler in the namespace it is given — so one module unsubscribing with
-  `off("change")` silently removed the `change` handlers of every other module that had
-  also subscribed without a namespace. The readme now documents this and shows the
-  namespaced form throughout.
-
-### Changed
-
-- The `error` event always carries an `Error`. A value thrown that was not one — from a
-  listener, or out of a write — was previously passed through as-is, contradicting the
-  declared handler signature.
-- `IIniFileCacheListener` declares `change` separately from `reload` and `save`. All three
-  take a string, but `change` receives the file's base name while the other two receive the
-  absolute path, which the shared `filePath` parameter name obscured.
-
-### Internal
-
-- The byte order mark found by a read is passed to the parse as an argument rather than
-  through a field consumed by whichever parse ran next.
-- One retry loop, one section-and-index constructor, one temp-path helper and one
-  line-break pattern, each of which previously existed in two places.
-- Path resolution, containment and file creation are extracted from the constructor.
-- `noUnusedLocals` and `noUnusedParameters` are enabled; two dead locals in the parser
-  were removed.
-
 ## [2.2.0] - 2026-08-19
 
 ### Added
@@ -90,7 +90,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a no-op while already watching and silently gives up when the watcher cannot be created,
   so there was no way to tell a watching instance from an unwatched one.
 
-## [2.1.0] - 2026-07-28
+## [2.1.0] - 2026-07-30
 
 A correctness and hardening release. Every issue below was reproduced against 2.0.5
 before being fixed, and each has a regression test.
@@ -99,36 +99,114 @@ Several entries under **Changed** and **Security** tighten input handling and wi
 reject or reinterpret input that 2.0.5 silently accepted. Review those sections
 before upgrading.
 
-### Security
+### Added
 
-- **Prevented ini injection through `setSetting`.** Values, keys and section names were
-  written to disk verbatim, so a value containing a line break could forge additional
-  keys and entire sections. Storing the untrusted string
-  `"bob\nAdmin=true\n[Security]\nAdmin=true"` produced a real `Admin=true` setting and a
-  second `[Security]` block on the next read — a privilege-escalation path wherever the
-  ini file backs authentication or permission settings. `setSetting` now throws a
-  `TypeError` for line breaks and null characters in values, and for `]`, `=`, line breaks
-  and null characters in section names and keys.
-- **Optional containment of `fileName` within `cachePath`,** via the new
-  `restrictToCachePath` option. It is **off by default**: both constructor arguments come
-  from the consuming application, which can point anywhere through `cachePath` regardless,
-  so `..` in `fileName` is a legitimate way to reach a sibling directory and continues to
-  work exactly as before. Turn the option on when `fileName` comes from somewhere
-  untrusted.
-- **Bounded reads.** The whole file was read with no size limit. A very large or hostile
-  file could exhaust memory or stall the process. Reads are now capped at 10 MB by default,
-  configurable with the `maxFileSize` option; oversized files emit an `error` and leave the
-  cached settings untouched.
-- **Made the lock file an actual lock.** The previous implementation checked
-  `fs.existsSync` and then wrote the lock in a separate step, so two processes could both
-  believe they held it. After 20 attempts it also wrote the file anyway and deleted a lock
-  it did not own. Locks are now taken with an exclusive `open(..., "wx")` and stamped with a
-  token, so a lock is only ever removed by the writer that took it — including when a writer
-  has had its own lock broken as stale by someone else. `save()` refuses to write when the
-  lock cannot be acquired. Locks older than 10 seconds are treated as abandoned and broken.
-- **Scoped the lock to the file.** The lock lived at `<directory>/.lck`, so two instances on
-  different files in the same directory contended with each other, and each one's unlock
-  deleted the other's lock. The lock is now `<file>.lck`.
+- Optional third constructor argument, `IIniFileCacheOptions`:
+  - `maxFileSize` (default `10485760`) — largest file that will be read, in bytes.
+  - `caseInsensitive` (default `false`) — match section names and keys case-insensitively.
+  - `debounceDelay` (default `50`) — window used to coalesce file-change events.
+  - `restrictToCachePath` (default `false`) — require the resolved file to stay inside
+    `cachePath`.
+  - `encoding` (default `"utf8"`) — character encoding of the file.
+- `save()` returns `Promise<boolean>` — `true` when the file was written, `false` when the
+  lock could not be acquired or the write failed. The `save` and `error` events are
+  unchanged.
+- `cacheFileSettings()` returns `Promise<boolean>` — `true` when the file was read and
+  parsed, `false` when it could not be and an `error` was emitted. It previously returned
+  `Promise<void>`.
+- `parseContents()` returns `boolean` — `true` when the content was accepted, `false` when
+  it was rejected. It previously returned `void`.
+- `reload()` returns `Promise<boolean>` — `true` when the cache was refreshed, `false` when
+  the read or the parse failed. It previously returned `Promise<void>`, and emitted `reload`
+  even when nothing had been reloaded.
+- Atomic saves: contents are written to `<file>.tmp` and renamed into place, so a concurrent
+  reader can never observe a half-written file. Windows cannot rename over a file another
+  process holds open, so the write falls back to an in-place write there after a few short
+  retries — not atomic, but preferable to a save that fails outright.
+- Change events are debounced, collapsing the multiple events most platforms emit for a
+  single write into one.
+
+### Changed
+
+- **`require()` is typed correctly.** The `exports` map listed `types` after `import` and
+  `require`, and conditions are matched in order, so TypeScript never reached it. A
+  CommonJS consumer under `node16` resolution got
+  `TS1471: ... only resolves to an ES module, which cannot be imported with 'require'` and
+  `TS2351: This expression is not constructable` — for the `require()` call the README
+  documents. `types` is now first in each condition.
+- **A CommonJS declaration that matches the CommonJS bundle.** That bundle is built with
+  `exports: "default"`, so `require()` returns the class itself, while the only declaration
+  said `export default`. A generated `dist/iniFileCache.d.cts` now describes the real shape
+  with `export =`, and the build emits it so it cannot drift.
+- **Removed `dist/iniFileCache.cjs.d.ts` and `dist/iniFileCache.mjs.d.ts`.** They declared
+  ambient modules for deep paths the `exports` map does not expose, were never referenced,
+  and typed anything that did reach them as `any`.
+- **`listener` is typed.** It was `any`, so the entire event API was unchecked. It now
+  returns `IIniFileCacheListener`, which declares `on`, `once`, `off` and `emit` along with
+  the handler signature of each event.
+- `./package.json` is exported, which some tooling reads.
+- Verified by type-checking real consumer projects installed from `npm pack`, under
+  `node16`, `nodenext`, `bundler` and `node` resolution, for both `import` and
+  `import x = require(...)`.
+
+
+
+- **Duplicate sections are merged and the last duplicate key wins.** Previously a repeated
+  `[Section]` header created a second entry: reads returned the first, `setSetting` and
+  `getKeys` only saw the first, and both were written on save. Which duplicate won was
+  therefore inconsistent between reading and writing.
+- **`getInt` rejects malformed values instead of salvaging a prefix.** `parseInt` stopped at
+  the first invalid character, so `123abc` became `123`, `12.34` became `12`, `0x10` became
+  `0`, and `99999999999999999999` was returned as an unsafe float. Values must now match
+  `[+-]?\d+` and be a safe integer; anything else returns `defaultValue`.
+- **`getBool` returns `defaultValue` for unrecognized values.** The old test matched any
+  value starting with `t`, `1` or `y`, so `123` was `true` and every other unrecognized
+  value was silently `false`. Recognized true values are now `t`, `true`, `y`, `yes`, `on`,
+  `1`; false values are `f`, `false`, `n`, `no`, `off`, `0`.
+- **`setSetting` trims section names, keys and values,** so the in-memory value always
+  matches what a save-and-reload cycle produces.
+- **`getSetting`'s `defaultValue` parameter is typed `string | null` and defaults to `null`**
+  rather than `""`. Callers passing a string are unaffected.
+- The file watcher watches the containing directory and filters by filename, instead of
+  watching the file directly. A watcher bound to a file stops working when the file is
+  replaced, which is how most editors — and now `save()` itself — write.
+- An inline comment after a section header (`[Server] ; comment`) is ignored rather than
+  parsed as a key.
+- The constructor throws a `TypeError` for an empty `cachePath` or `fileName`.
+- The file path is built with `path.resolve(cachePath, fileName)` rather than
+  `path.join`, so an absolute `fileName` now works instead of producing a nonsensical
+  path such as `C:\a\C:\b\x.ini`. For an absolute `cachePath` — the usual case — the
+  result is identical to before, `..` included. Only a **relative** `cachePath` differs:
+  the same file is used, but the path carried by the `save` and `reload` events is now
+  absolute rather than relative.
+- The `change` event payload is the file's base name. It was previously the raw `filename`
+  from `fs.watch`, which is platform-dependent and can be `null`.
+- **An exception thrown by a listener no longer propagates to the caller.** It is caught and
+  re-emitted as `error`. Previously a throwing `reload` or `save` listener surfaced out of the
+  awaited call; code relying on that must listen for `error` instead.
+- Filenames are compared case-insensitively on macOS as well as Windows, matching the default
+  behavior of both filesystems.
+- Parsing a section is linear in the number of keys. The duplicate-key merging added in this
+  release originally rescanned the section for every line, which took about 21 seconds for
+  40,000 keys and would have made a file near the 10 MB limit unusable. The same input now
+  parses in about 35 ms.
+- **Lookups are O(1) rather than a linear scan.** `getSetting`, `getKeys`, `hasSection`,
+  `hasKey`, `setSetting`, `removeKey` and `removeSection` all searched the whole file, so
+  the most ordinary consumer loop — walk the sections, read each one's keys — was quadratic:
+  about 900 ms for 4,000 sections and 1,100 ms for 8,000 keys in one section. The index the
+  parser already builds is now kept, taking both to a couple of milliseconds.
+
+
+
+- The suite now runs against a real temporary directory. It previously mocked `fs` and
+  `path` wholesale, which is why none of the issues above were caught — one test even
+  asserted the broken `fs.unwatchFile` behavior. 157 tests cover parsing, locking, atomic
+  writes, injection rejection, path containment, watching, listener isolation,
+  line-ending and encoding fidelity, lookup and parse performance, two caches sharing one
+  file, concurrent saves, write atomicity under concurrent readers, and a deterministic
+  round-trip fuzz over 150 generated files plus a mutation fuzz asserting the ordered and
+  indexed views of the settings never disagree, and guards on the published declarations
+  and package entry points.
 
 ### Fixed
 
@@ -236,114 +314,36 @@ before upgrading.
   limit, because `size > NaN` is never true, and a negative value rejected every read while
   reporting nothing. Both now throw a `TypeError`.
 
-### Packaging and types
+### Security
 
-- **`require()` is typed correctly.** The `exports` map listed `types` after `import` and
-  `require`, and conditions are matched in order, so TypeScript never reached it. A
-  CommonJS consumer under `node16` resolution got
-  `TS1471: ... only resolves to an ES module, which cannot be imported with 'require'` and
-  `TS2351: This expression is not constructable` — for the `require()` call the README
-  documents. `types` is now first in each condition.
-- **A CommonJS declaration that matches the CommonJS bundle.** That bundle is built with
-  `exports: "default"`, so `require()` returns the class itself, while the only declaration
-  said `export default`. A generated `dist/iniFileCache.d.cts` now describes the real shape
-  with `export =`, and the build emits it so it cannot drift.
-- **Removed `dist/iniFileCache.cjs.d.ts` and `dist/iniFileCache.mjs.d.ts`.** They declared
-  ambient modules for deep paths the `exports` map does not expose, were never referenced,
-  and typed anything that did reach them as `any`.
-- **`listener` is typed.** It was `any`, so the entire event API was unchecked. It now
-  returns `IIniFileCacheListener`, which declares `on`, `once`, `off` and `emit` along with
-  the handler signature of each event.
-- `./package.json` is exported, which some tooling reads.
-- Verified by type-checking real consumer projects installed from `npm pack`, under
-  `node16`, `nodenext`, `bundler` and `node` resolution, for both `import` and
-  `import x = require(...)`.
-
-### Added
-
-- Optional third constructor argument, `IIniFileCacheOptions`:
-  - `maxFileSize` (default `10485760`) — largest file that will be read, in bytes.
-  - `caseInsensitive` (default `false`) — match section names and keys case-insensitively.
-  - `debounceDelay` (default `50`) — window used to coalesce file-change events.
-  - `restrictToCachePath` (default `false`) — require the resolved file to stay inside
-    `cachePath`.
-  - `encoding` (default `"utf8"`) — character encoding of the file.
-- `save()` returns `Promise<boolean>` — `true` when the file was written, `false` when the
-  lock could not be acquired or the write failed. The `save` and `error` events are
-  unchanged.
-- `cacheFileSettings()` returns `Promise<boolean>` — `true` when the file was read and
-  parsed, `false` when it could not be and an `error` was emitted. It previously returned
-  `Promise<void>`.
-- `parseContents()` returns `boolean` — `true` when the content was accepted, `false` when
-  it was rejected. It previously returned `void`.
-- `reload()` returns `Promise<boolean>` — `true` when the cache was refreshed, `false` when
-  the read or the parse failed. It previously returned `Promise<void>`, and emitted `reload`
-  even when nothing had been reloaded.
-- Atomic saves: contents are written to `<file>.tmp` and renamed into place, so a concurrent
-  reader can never observe a half-written file. Windows cannot rename over a file another
-  process holds open, so the write falls back to an in-place write there after a few short
-  retries — not atomic, but preferable to a save that fails outright.
-- Change events are debounced, collapsing the multiple events most platforms emit for a
-  single write into one.
-
-### Changed
-
-- **Duplicate sections are merged and the last duplicate key wins.** Previously a repeated
-  `[Section]` header created a second entry: reads returned the first, `setSetting` and
-  `getKeys` only saw the first, and both were written on save. Which duplicate won was
-  therefore inconsistent between reading and writing.
-- **`getInt` rejects malformed values instead of salvaging a prefix.** `parseInt` stopped at
-  the first invalid character, so `123abc` became `123`, `12.34` became `12`, `0x10` became
-  `0`, and `99999999999999999999` was returned as an unsafe float. Values must now match
-  `[+-]?\d+` and be a safe integer; anything else returns `defaultValue`.
-- **`getBool` returns `defaultValue` for unrecognized values.** The old test matched any
-  value starting with `t`, `1` or `y`, so `123` was `true` and every other unrecognized
-  value was silently `false`. Recognized true values are now `t`, `true`, `y`, `yes`, `on`,
-  `1`; false values are `f`, `false`, `n`, `no`, `off`, `0`.
-- **`setSetting` trims section names, keys and values,** so the in-memory value always
-  matches what a save-and-reload cycle produces.
-- **`getSetting`'s `defaultValue` parameter is typed `string | null` and defaults to `null`**
-  rather than `""`. Callers passing a string are unaffected.
-- The file watcher watches the containing directory and filters by filename, instead of
-  watching the file directly. A watcher bound to a file stops working when the file is
-  replaced, which is how most editors — and now `save()` itself — write.
-- An inline comment after a section header (`[Server] ; comment`) is ignored rather than
-  parsed as a key.
-- The constructor throws a `TypeError` for an empty `cachePath` or `fileName`.
-- The file path is built with `path.resolve(cachePath, fileName)` rather than
-  `path.join`, so an absolute `fileName` now works instead of producing a nonsensical
-  path such as `C:\a\C:\b\x.ini`. For an absolute `cachePath` — the usual case — the
-  result is identical to before, `..` included. Only a **relative** `cachePath` differs:
-  the same file is used, but the path carried by the `save` and `reload` events is now
-  absolute rather than relative.
-- The `change` event payload is the file's base name. It was previously the raw `filename`
-  from `fs.watch`, which is platform-dependent and can be `null`.
-- **An exception thrown by a listener no longer propagates to the caller.** It is caught and
-  re-emitted as `error`. Previously a throwing `reload` or `save` listener surfaced out of the
-  awaited call; code relying on that must listen for `error` instead.
-- Filenames are compared case-insensitively on macOS as well as Windows, matching the default
-  behavior of both filesystems.
-- Parsing a section is linear in the number of keys. The duplicate-key merging added in this
-  release originally rescanned the section for every line, which took about 21 seconds for
-  40,000 keys and would have made a file near the 10 MB limit unusable. The same input now
-  parses in about 35 ms.
-- **Lookups are O(1) rather than a linear scan.** `getSetting`, `getKeys`, `hasSection`,
-  `hasKey`, `setSetting`, `removeKey` and `removeSection` all searched the whole file, so
-  the most ordinary consumer loop — walk the sections, read each one's keys — was quadratic:
-  about 900 ms for 4,000 sections and 1,100 ms for 8,000 keys in one section. The index the
-  parser already builds is now kept, taking both to a couple of milliseconds.
-
-### Tests
-
-- The suite now runs against a real temporary directory. It previously mocked `fs` and
-  `path` wholesale, which is why none of the issues above were caught — one test even
-  asserted the broken `fs.unwatchFile` behavior. 157 tests cover parsing, locking, atomic
-  writes, injection rejection, path containment, watching, listener isolation,
-  line-ending and encoding fidelity, lookup and parse performance, two caches sharing one
-  file, concurrent saves, write atomicity under concurrent readers, and a deterministic
-  round-trip fuzz over 150 generated files plus a mutation fuzz asserting the ordered and
-  indexed views of the settings never disagree, and guards on the published declarations
-  and package entry points.
+- **Prevented ini injection through `setSetting`.** Values, keys and section names were
+  written to disk verbatim, so a value containing a line break could forge additional
+  keys and entire sections. Storing the untrusted string
+  `"bob\nAdmin=true\n[Security]\nAdmin=true"` produced a real `Admin=true` setting and a
+  second `[Security]` block on the next read — a privilege-escalation path wherever the
+  ini file backs authentication or permission settings. `setSetting` now throws a
+  `TypeError` for line breaks and null characters in values, and for `]`, `=`, line breaks
+  and null characters in section names and keys.
+- **Optional containment of `fileName` within `cachePath`,** via the new
+  `restrictToCachePath` option. It is **off by default**: both constructor arguments come
+  from the consuming application, which can point anywhere through `cachePath` regardless,
+  so `..` in `fileName` is a legitimate way to reach a sibling directory and continues to
+  work exactly as before. Turn the option on when `fileName` comes from somewhere
+  untrusted.
+- **Bounded reads.** The whole file was read with no size limit. A very large or hostile
+  file could exhaust memory or stall the process. Reads are now capped at 10 MB by default,
+  configurable with the `maxFileSize` option; oversized files emit an `error` and leave the
+  cached settings untouched.
+- **Made the lock file an actual lock.** The previous implementation checked
+  `fs.existsSync` and then wrote the lock in a separate step, so two processes could both
+  believe they held it. After 20 attempts it also wrote the file anyway and deleted a lock
+  it did not own. Locks are now taken with an exclusive `open(..., "wx")` and stamped with a
+  token, so a lock is only ever removed by the writer that took it — including when a writer
+  has had its own lock broken as stale by someone else. `save()` refuses to write when the
+  lock cannot be acquired. Locks older than 10 seconds are treated as abandoned and broken.
+- **Scoped the lock to the file.** The lock lived at `<directory>/.lck`, so two instances on
+  different files in the same directory contended with each other, and each one's unlock
+  deleted the other's lock. The lock is now `<file>.lck`.
 
 ## [2.0.5] - 2026-05-19
 
@@ -384,3 +384,14 @@ before upgrading.
 ## [1.0.0] - 2024-10-08
 
 - Initial release of `@mdaemon/ini-file-cache`.
+
+[2.3.0]: https://www.npmjs.com/package/@mdaemon/ini-file-cache/v/2.3.0
+[2.2.0]: https://www.npmjs.com/package/@mdaemon/ini-file-cache/v/2.2.0
+[2.1.0]: https://www.npmjs.com/package/@mdaemon/ini-file-cache/v/2.1.0
+[2.0.5]: https://github.com/mdaemon-technologies/ini-file-cache/commit/93c6126a6889aca4c3460d963c6d88b4e6be8602
+[2.0.0]: https://www.npmjs.com/package/@mdaemon/ini-file-cache/v/2.0.0
+[1.1.2]: https://www.npmjs.com/package/@mdaemon/ini-file-cache/v/1.1.2
+[1.1.1]: https://www.npmjs.com/package/@mdaemon/ini-file-cache/v/1.1.1
+[1.1.0]: https://www.npmjs.com/package/@mdaemon/ini-file-cache/v/1.1.0
+[1.0.1]: https://www.npmjs.com/package/@mdaemon/ini-file-cache/v/1.0.1
+[1.0.0]: https://www.npmjs.com/package/@mdaemon/ini-file-cache/v/1.0.0

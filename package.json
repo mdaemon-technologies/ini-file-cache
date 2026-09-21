@@ -1,6 +1,6 @@
 {
   "name": "@mdaemon/ini-file-cache",
-  "version": "2.3.0",
+  "version": "2.3.1",
   "description": "A library for reading, writing, and watching ini files for changes",
   "type": "module",
   "main": "dist/iniFileCache.cjs",
@@ -34,6 +34,9 @@
     "url": "https://www.mdaemon.com"
   },
   "license": "LGPL-2.1",
+  "engines": {
+    "node": ">=16"
+  },
   "bugs": {
     "url": "https://github.com/mdaemon-technologies/ini-file-cache/issues"
   },
@@ -56,7 +59,7 @@
   },
   "files": [
     "dist",
-    "changelog.md"
+    "CHANGELOG.md"
   ],
   "exports": {
     ".": {
