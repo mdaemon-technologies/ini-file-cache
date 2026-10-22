@@ -3,7 +3,7 @@
 [![npm](https://img.shields.io/npm/v/@mdaemon/ini-file-cache?color=blue)](https://www.npmjs.com/package/@mdaemon/ini-file-cache)
 [![license](https://img.shields.io/npm/l/@mdaemon/ini-file-cache?color=green)](LICENSE)
 [![node](https://img.shields.io/node/v/@mdaemon/ini-file-cache)](https://nodejs.org)
-[![install size](https://packagephobia.com/badge?p=@mdaemon/ini-file-cache)](https://packagephobia.com/result?p=@mdaemon/ini-file-cache)
+[![install size](https://img.shields.io/npm/unpacked-size/@mdaemon/ini-file-cache)](https://packagephobia.com/result?p=@mdaemon/ini-file-cache)
 [![CI](https://github.com/mdaemon-technologies/ini-file-cache/actions/workflows/node.js.yml/badge.svg)](https://github.com/mdaemon-technologies/ini-file-cache/actions/workflows/node.js.yml)
 
 A library for reading, writing, and watching ini files for changes
