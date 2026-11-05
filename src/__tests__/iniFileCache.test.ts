@@ -1,7 +1,10 @@
+import { execSync } from 'child_process';
 import * as fs from 'fs';
+import { createRequire, syncBuiltinESMExports } from 'module';
 import * as os from 'os';
 import * as path from 'path';
 import * as ts from 'typescript';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import IniFileCache, { IIniFileCacheOptions } from '../iniFileCache';
 
 // These tests run against a real temporary directory. Mocking fs hides exactly the
@@ -831,12 +834,28 @@ describe('published declarations', () => {
       expect(target.replace('./', '').startsWith('dist/')).toBe(true);
     }
   });
+
+  test('the package publishes only the entry point, not the internal modules', () => {
+    if (!hasBuild) return;
+    // tsc emits a declaration for every source module, but only the entry's belong in the
+    // package: dist/internal/*.d.ts describe implementation details no consumer can import,
+    // and shipping them would invite someone to try.
+    const output = execSync('npm pack --dry-run --json --ignore-scripts', {
+      cwd: root,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const [{ files }] = JSON.parse(output) as [{ files: { path: string }[] }];
+    const published = files.map((file) => file.path.replace(/\\/g, '/')).filter((p) => p.startsWith('dist/'));
+    expect(published.length).toBeGreaterThan(0);
+    expect(published.filter((p) => !p.startsWith('dist/iniFileCache.'))).toEqual([]);
+  }, 60000);
 });
 
 describe('build configuration', () => {
-  // `npm run build` reports a TypeScript error — in the source or in tsconfig.json itself —
-  // as a rollup warning and emits the bundle anyway, and ts-jest does not report problems
-  // with the compiler options. Without this, a broken configuration builds and tests green.
+  // Vitest strips types without checking them, so a type error — in the source or in
+  // tsconfig.json itself — would test green. `npm run build` does fail on one now, since it
+  // runs tsc for the declarations, but the build is a separate step a test run can skip.
   test('the project compiles under its own tsconfig.json with no diagnostics', () => {
     const root = path.join(__dirname, '..', '..');
     const configPath = path.join(root, 'tsconfig.json');
@@ -1523,7 +1542,9 @@ describe('save', () => {
 
     // A descriptor limit cannot be provoked reliably, so it is injected for exactly one
     // call on the fs module itself. Everything else in this test uses the real filesystem.
-    const fsModule = jest.requireActual<typeof fs>('fs');
+    // The library imports fs as an ES module, whose named exports are a snapshot of the
+    // CommonJS object: a patch reaches it only once syncBuiltinESMExports() copies it over.
+    const fsModule = createRequire(import.meta.url)('fs') as typeof fs;
     const realOpenSync = fsModule.openSync;
     let injected = false;
     fsModule.openSync = ((...args: unknown[]) => {
@@ -1535,12 +1556,14 @@ describe('save', () => {
       }
       return (realOpenSync as (...a: unknown[]) => number)(...args);
     }) as typeof fs.openSync;
+    syncBuiltinESMExports();
 
     try {
       cache.setSetting('S', 'k', '2');
       expect(await cache.save()).toBe(false);
     } finally {
       fsModule.openSync = realOpenSync;
+      syncBuiltinESMExports();
     }
     expect(injected).toBe(true);
 
@@ -1956,7 +1979,7 @@ describe('watch and unwatch', () => {
     const cache = create('listener-console.ini', '');
     const errors = collectErrors(cache);
     const logged: unknown[] = [];
-    const consoleError = jest.spyOn(console, 'error').mockImplementation((...args) => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation((...args) => {
       logged.push(args);
     });
 
@@ -2013,7 +2036,7 @@ describe('watch and unwatch', () => {
 
   test('a throwing error listener is swallowed rather than looping', async () => {
     const cache = create('throwing-error.ini', '');
-    const consoleError = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     try {
       let calls = 0;
       cache.listener.on('error', () => {

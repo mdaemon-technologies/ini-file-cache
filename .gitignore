@@ -107,3 +107,7 @@ claude.md
 
 # Release notes for GitHub Releases (see CLAUDE.md)
 release
+
+# Declarations tsc emits for the internal modules. Not published (see "files" in
+# package.json), so not committed either.
+dist/internal/

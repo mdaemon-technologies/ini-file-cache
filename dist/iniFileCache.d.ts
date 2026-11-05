@@ -48,51 +48,23 @@ export interface IIniFileCacheOptions {
     encoding?: BufferEncoding;
 }
 export default class IniFileCache {
-    private file;
-    private baseName;
-    /** The watched directory: dirname of the file, needed on every watch and every retry. */
-    private directory;
-    private settings;
-    /**
-     * Normalized section name to the same ISection objects held in `settings`. Without it
-     * every lookup is a linear scan, so walking a file's own sections costs O(n²) — about a
-     * second for 4,000 sections.
-     */
-    private sectionIndex;
-    private watching;
-    private unmatchedEvents;
-    private debounceTimer;
-    private debounceStartedAt;
+    private readonly file;
+    private readonly baseName;
+    private readonly options;
+    private readonly events;
+    private readonly watcher;
+    private document;
+    private layout;
     private lastWrite;
-    private ready;
-    private byteOrderMarkBytes;
-    private endOfLine;
-    private namelessHasHeader;
-    private _listener;
     private lossyRead;
     private loaded;
-    private readonly maxFileSize;
-    private readonly caseInsensitive;
-    private readonly debounceDelay;
-    private readonly encoding;
     constructor(cachePath: string, fileName: string, options?: IIniFileCacheOptions);
     get listener(): IIniFileCacheListener;
     /**
-     * Emits without letting a listener's exception escape into library control flow, and
-     * defers events raised during construction until a listener can exist.
+     * Reports a refusal or failure as an `error` event. Every error goes out through here.
+     * Returns false so that a method resolving false can `return this.fail(...)`.
      */
-    private emitEvent;
-    private dispatchEvent;
-    /**
-     * A listener threw. It is reported as an `error` event so that it cannot escape into
-     * library control flow, unless the listener that threw was an `error` listener itself:
-     * routing that back through the same event would loop.
-     */
-    private reportListenerError;
-    /** Normalizes a section name or key for comparison. Never throws, so lookups stay lenient. */
-    private normalize;
-    private findSection;
-    private findSetting;
+    private fail;
     /** Resolves to true when the content parsed; false when it was rejected and `error` was emitted. */
     parseContents(contents: string): boolean;
     /**
@@ -101,7 +73,10 @@ export default class IniFileCache {
      * describes what the cache holds.
      */
     private parse;
-    /** Reads the file, refusing anything larger than maxFileSize. Throws on read errors. */
+    /**
+     * Reads the file, refusing anything larger than maxFileSize. Throws on read errors.
+     * Resolves null when the read was refused, having emitted why.
+     */
     private readFileContents;
     /** Single-attempt synchronous load, used during construction. */
     private loadSync;
@@ -125,37 +100,14 @@ export default class IniFileCache {
     removeKey(section: string, key: string): void;
     /** Resolves true when the file was re-read and parsed; false when it was not. */
     reload(): Promise<boolean>;
-    /**
-     * Publishes `contents` to the file. The rename makes the replacement atomic, so a
-     * concurrent reader never sees a partial file. Windows refuses to rename over a file
-     * another process holds open, so after a few attempts this falls back to writing in
-     * place, which that platform does allow. The fallback is not atomic, but a save that
-     * silently fails is worse than one that is briefly observable mid-write.
-     */
-    private writeContents;
-    /** Renders the cache as ini text. Kept separate so a save can do it while holding the lock. */
-    private serialize;
+    /** The bytes a save writes: the cache as ini text, in the file's encoding and layout. */
+    private render;
     save(): Promise<boolean>;
-    private readSignature;
     /** True when the file on disk is still exactly what this instance last wrote. */
     private isOwnLastWrite;
     /** True while a watcher is active on the file. */
     isWatching(): boolean;
     watch(): void;
-    private matchesFile;
-    /**
-     * Closes a watcher whose directory has been removed, since it can never deliver another
-     * usable event: the handle refers to an inode that is gone, and recreating the directory
-     * does not re-attach it. Leaving it open makes isWatching() claim a watcher that cannot
-     * work, and stops watch() from establishing a new one.
-     */
-    private stopIfDirectoryMissing;
-    /**
-     * Coalesces the multiple events most platforms emit for a single write, but only up to
-     * DEBOUNCE_MAX_WAIT_FACTOR times the delay: a file being rewritten faster than the delay
-     * would otherwise restart the timer indefinitely and never be adopted at all.
-     */
-    private scheduleReload;
     private handleChange;
     unwatch(): void;
 }

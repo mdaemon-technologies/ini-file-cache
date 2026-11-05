@@ -1,8 +1,9 @@
-# Installs and builds with one current Node.js, then runs the tests on every Node.js the
-# package supports. The library supports Node 16, but its build tools need not: rollup 4
-# requires Node 18 and @rollup/plugin-terser 1 requires Node 20, so installing and building
-# on every matrix version would run them on Node versions they do not support.
+# Builds the package and tests it across the Node.js versions it supports.
 # For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-nodejs
+#
+# The package supports older Node.js than its toolchain does: Vite needs Node 20.19 and
+# Vitest needs Node 22.12. So the full suite runs where the toolchain does, and the bundle
+# it builds is smoke-tested on the older versions with nothing but node:test.
 
 name: Node.js CI
 
@@ -19,15 +20,15 @@ jobs:
 
     strategy:
       matrix:
-        node-version: [16.x, 18.x, 20.x, 22.x, 24.x, 26.x]
+        node-version: [22.x, 24.x, 26.x]
         # See supported Node.js release schedule at https://nodejs.org/en/about/releases/
 
     steps:
     - uses: actions/checkout@v7
-    - name: Use Node.js 24.x to install and build
+    - name: Use Node.js ${{ matrix.node-version }}
       uses: actions/setup-node@v7
       with:
-        node-version: 24.x
+        node-version: ${{ matrix.node-version }}
         cache: 'npm'
     - run: npm ci
     # Fails on a known vulnerability in anything a consumer installs. Dev-only findings are
@@ -35,8 +36,36 @@ jobs:
     - name: Audit runtime dependencies
       run: npm audit --omit=dev --audit-level=moderate
     - run: npm run build
-    - name: Use Node.js ${{ matrix.node-version }} to test
+    # The Vitest suite against the source, then the smoke tests against the bundle.
+    - run: npm test
+    - name: Keep the bundle for the older Node versions
+      if: matrix.node-version == '24.x'
+      uses: actions/upload-artifact@v7
+      with:
+        name: dist
+        path: dist/
+        if-no-files-found: error
+
+  smoke:
+    needs: build
+
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x]
+
+    steps:
+    - uses: actions/checkout@v7
+    - name: Use Node.js ${{ matrix.node-version }}
       uses: actions/setup-node@v7
       with:
         node-version: ${{ matrix.node-version }}
-    - run: npm test
+    # The bundle built and tested above, replacing the committed one, which may be stale
+    # on a pull request.
+    - uses: actions/download-artifact@v8
+      with:
+        name: dist
+        path: dist/
+    # No npm ci: the smoke tests use only node:test and the built bundle.
+    - run: npm run test:smoke
