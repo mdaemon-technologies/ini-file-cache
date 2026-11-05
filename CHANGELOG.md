@@ -5,6 +5,30 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Packaging and types
+
+- Built with TypeScript 6 (`~6.0.3`, up from 5.8) and ts-jest 29.4. Nothing changes for a
+  consumer: the published bundles and declarations are byte-for-byte what TypeScript 5.8
+  produced. TypeScript 6 rejects the `"moduleResolution": "node"` the build used, but the
+  rollup plugin reports that as a warning and emits the bundle anyway, so the upgrade alone
+  built and tested green on a configuration TypeScript had refused. The build now resolves
+  modules as `bundler`, which TypeScript 7 keeps, and drops an `ignoreDeprecations` setting
+  that no longer silenced anything. ts-jest moves to 29.4 because 29.3 accepts only
+  TypeScript below 6, which made `npm ci` fail to resolve.
+- Removed `.npmignore`. The `files` field in `package.json` already decides what is
+  published, so the file never took effect; the published file list is unchanged.
+
+### Tests
+
+- The project is compiled under its own `tsconfig.json` and any diagnostic fails the suite.
+  Neither `npm run build` nor ts-jest fails on a deprecated or invalid compiler option.
+- CI installs and builds once on Node 24, then runs the tests on each Node from 16 to 26.
+  It used to build on every matrix version, so the Node 16 job ran rollup 4, which requires
+  Node 18. npm only warned about the mismatch, and any rollup update could have broken
+  that job for a reason unrelated to the library.
+
 ## [2.3.0] - 2026-09-10
 
 ### Added

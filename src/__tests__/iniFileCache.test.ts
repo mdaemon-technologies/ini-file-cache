@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import * as ts from 'typescript';
 import IniFileCache, { IIniFileCacheOptions } from '../iniFileCache';
 
 // These tests run against a real temporary directory. Mocking fs hides exactly the
@@ -830,6 +831,31 @@ describe('published declarations', () => {
       expect(target.replace('./', '').startsWith('dist/')).toBe(true);
     }
   });
+});
+
+describe('build configuration', () => {
+  // `npm run build` reports a TypeScript error — in the source or in tsconfig.json itself —
+  // as a rollup warning and emits the bundle anyway, and ts-jest does not report problems
+  // with the compiler options. Without this, a broken configuration builds and tests green.
+  test('the project compiles under its own tsconfig.json with no diagnostics', () => {
+    const root = path.join(__dirname, '..', '..');
+    const configPath = path.join(root, 'tsconfig.json');
+    const { config, error } = ts.readConfigFile(configPath, ts.sys.readFile);
+    const parsed = ts.parseJsonConfigFileContent(config, ts.sys, root, undefined, configPath);
+    const program = ts.createProgram({
+      rootNames: parsed.fileNames,
+      options: { ...parsed.options, noEmit: true },
+      configFileParsingDiagnostics: parsed.errors,
+    });
+    // getPreEmitDiagnostics includes the configFileParsingDiagnostics handed to the program.
+    const diagnostics = [...(error ? [error] : []), ...ts.getPreEmitDiagnostics(program)];
+    const host: ts.FormatDiagnosticsHost = {
+      getCanonicalFileName: (fileName) => fileName,
+      getCurrentDirectory: () => root,
+      getNewLine: () => '\n',
+    };
+    expect(ts.formatDiagnostics(diagnostics, host)).toBe('');
+  }, 30000);
 });
 
 describe('lookup performance', () => {
