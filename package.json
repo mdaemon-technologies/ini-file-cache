@@ -1,6 +1,6 @@
 {
   "name": "@mdaemon/ini-file-cache",
-  "version": "2.3.1",
+  "version": "2.3.2",
   "description": "A library for reading, writing, and watching ini files for changes",
   "type": "module",
   "main": "dist/iniFileCache.cjs",
@@ -43,7 +43,7 @@
   "homepage": "https://github.com/mdaemon-technologies/ini-file-cache#readme",
   "devDependencies": {
     "@rollup/plugin-commonjs": "^28.0.3",
-    "@rollup/plugin-terser": "^0.4.4",
+    "@rollup/plugin-terser": "^1.0.2",
     "@rollup/plugin-typescript": "^12.1.2",
     "@types/jest": "^29.5.14",
     "@types/node": "^25.9.0",

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- The build no longer uses vulnerable versions of `serialize-javascript` (GHSA-5c6j-r48x-rmvq,
+  high; GHSA-qj8w-gfj5-8c6v; GHSA-m5mm-p8h7-m29v). `@rollup/plugin-terser` moves from 0.4.4
+  to 1.0.2, which uses `serialize-javascript` 7.1.4. Consumers were never exposed: it is a
+  build tool and not part of the installed package. The new terser omits a few redundant
+  parentheses, so the minified bundles are about 20 bytes smaller but parse to the same
+  code; the declarations are unchanged. Plugin-terser 1 requires Node 20 to build, which
+  the CI change below already provides.
+- `npm audit` still reports 7 low-severity entries, all from `deepmerge` 4.3.1 inside jest
+  (GHSA-gcqx-w48m-w2h4). No patched `deepmerge` has been released, and jest 30 depends on
+  the same version, so upgrading jest would not fix it. `npm audit fix --force` would
+  instead downgrade jest to 25 and ts-jest to 25, so don't run it. jest only merges this
+  repository's own configuration, so no untrusted input reaches the flaw. A patched release
+  will arrive through `npm update deepmerge`.
+- CI now fails on a moderate-or-worse advisory in any runtime dependency
+  (`npm audit --omit=dev`). Dev-only advisories, like the one above, don't fail it.
+
 ### Packaging and types
 
 - Built with TypeScript 6 (`~6.0.3`, up from 5.8) and ts-jest 29.4. Nothing changes for a
