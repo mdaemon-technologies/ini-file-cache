@@ -70,7 +70,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whole suite. `smoke/` loads each bundle by package name through the `exports` map, reads,
   saves, checks the injection guard and follows an external change, using only `node:test`.
   It runs after the suite in `npm test`, and CI runs it on Node 18 and 20 against the bundle
-  the Node 24 job built, without installing anything.
+  the Node 24 job built, with only the runtime dependencies installed, as a consumer has
+  them.
 - The project is compiled under its own `tsconfig.json` and any diagnostic fails the suite.
   Vitest strips types without checking them, so a type error or a deprecated compiler option
   would otherwise test green. The test runs the installed `tsc`: TypeScript 7 is a native

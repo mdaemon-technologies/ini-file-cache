@@ -4,7 +4,8 @@
  *
  * The full suite runs under Vitest, which needs Node 22.12 or later, but the package
  * supports older Node versions. These checks use nothing but node:test and node:assert, so
- * they need no install and no TypeScript, and CI runs them on the versions Vitest cannot.
+ * they need no toolchain and no TypeScript — only the runtime dependencies the bundle
+ * imports, as a consumer would have — and CI runs them on the versions Vitest cannot.
  * They load the package by its own name, which also exercises the "exports" map a
  * consumer resolves through.
  *

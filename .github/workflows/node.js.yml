@@ -3,7 +3,8 @@
 #
 # The package supports older Node.js than its toolchain does: Vite needs Node 20.19 and
 # Vitest needs Node 22.12. So the full suite runs where the toolchain does, and the bundle
-# it builds is smoke-tested on the older versions with nothing but node:test.
+# it builds is smoke-tested on the older versions with node:test and the runtime
+# dependencies alone — what a consumer installs.
 
 name: Node.js CI
 
@@ -67,5 +68,8 @@ jobs:
       with:
         name: dist
         path: dist/
-    # No npm ci: the smoke tests use only node:test and the built bundle.
+    # The bundle imports its runtime dependencies rather than inlining them, so they must be
+    # installed. --omit=dev installs exactly what a consumer gets and none of the toolchain,
+    # which could not run on these versions anyway.
+    - run: npm ci --omit=dev --ignore-scripts
     - run: npm run test:smoke
