@@ -1,9 +1,8 @@
-import { execSync } from 'child_process';
+import { execSync, spawnSync } from 'child_process';
 import * as fs from 'fs';
 import { createRequire, syncBuiltinESMExports } from 'module';
 import * as os from 'os';
 import * as path from 'path';
-import * as ts from 'typescript';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import IniFileCache, { IIniFileCacheOptions } from '../iniFileCache';
 
@@ -856,24 +855,25 @@ describe('build configuration', () => {
   // Vitest strips types without checking them, so a type error — in the source or in
   // tsconfig.json itself — would test green. `npm run build` does fail on one now, since it
   // runs tsc for the declarations, but the build is a separate step a test run can skip.
+  //
+  // This runs the installed tsc rather than calling the compiler API: TypeScript 7 is a
+  // native binary whose package exports no compiler API, only `version` and `unstable/*`.
   test('the project compiles under its own tsconfig.json with no diagnostics', () => {
     const root = path.join(__dirname, '..', '..');
-    const configPath = path.join(root, 'tsconfig.json');
-    const { config, error } = ts.readConfigFile(configPath, ts.sys.readFile);
-    const parsed = ts.parseJsonConfigFileContent(config, ts.sys, root, undefined, configPath);
-    const program = ts.createProgram({
-      rootNames: parsed.fileNames,
-      options: { ...parsed.options, noEmit: true },
-      configFileParsingDiagnostics: parsed.errors,
+    // The exports map hides `typescript/bin/tsc`, but package.json is exported and its
+    // `bin` field names the launcher.
+    const tsPackage = createRequire(import.meta.url).resolve('typescript/package.json');
+    const tsc = path.join(path.dirname(tsPackage), JSON.parse(fs.readFileSync(tsPackage, 'utf8')).bin.tsc);
+    const result = spawnSync(process.execPath, [tsc, '--noEmit', '-p', path.join(root, 'tsconfig.json')], {
+      cwd: root,
+      encoding: 'utf8',
     });
-    // getPreEmitDiagnostics includes the configFileParsingDiagnostics handed to the program.
-    const diagnostics = [...(error ? [error] : []), ...ts.getPreEmitDiagnostics(program)];
-    const host: ts.FormatDiagnosticsHost = {
-      getCanonicalFileName: (fileName) => fileName,
-      getCurrentDirectory: () => root,
-      getNewLine: () => '\n',
-    };
-    expect(ts.formatDiagnostics(diagnostics, host)).toBe('');
+    expect(result.error).toBeUndefined();
+    // Only "0 means clean" is stable: TypeScript 6 exits 2 on diagnostics, 7 exits 1.
+    expect({ status: result.status, output: `${result.stdout}${result.stderr}`.trim() }).toEqual({
+      status: 0,
+      output: '',
+    });
   }, 30000);
 });
 

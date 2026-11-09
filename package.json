@@ -1,6 +1,6 @@
 {
   "name": "@mdaemon/ini-file-cache",
-  "version": "3.0.0",
+  "version": "2.3.2",
   "description": "A library for reading, writing, and watching ini files for changes",
   "type": "module",
   "main": "dist/iniFileCache.cjs",
@@ -45,7 +45,7 @@
   "devDependencies": {
     "@types/node": "^25.9.0",
     "terser": "^5.51.2",
-    "typescript": "~6.0.3",
+    "typescript": "~7.0.2",
     "vite": "^8.3.6",
     "vitest": "^5.1.0"
   },
