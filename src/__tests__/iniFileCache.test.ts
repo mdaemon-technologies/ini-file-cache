@@ -844,7 +844,14 @@ describe('published declarations', () => {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
     });
-    const [{ files }] = JSON.parse(output) as [{ files: { path: string }[] }];
+    // npm 11 prints an array of packed packages; npm 12 prints an object keyed by package
+    // name. CI tests with the npm bundled with Node, publish.yml with the latest npm, so
+    // both shapes have to be read.
+    type Packed = { name: string; files: { path: string }[] };
+    const parsed = JSON.parse(output) as Packed[] | Record<string, Packed>;
+    const packed = (Array.isArray(parsed) ? parsed : Object.values(parsed)).find((p) => p.name === pkg.name);
+    expect(packed).toBeDefined();
+    const files = packed!.files;
     const published = files.map((file) => file.path.replace(/\\/g, '/')).filter((p) => p.startsWith('dist/'));
     expect(published.length).toBeGreaterThan(0);
     expect(published.filter((p) => !p.startsWith('dist/iniFileCache.'))).toEqual([]);
@@ -852,6 +859,8 @@ describe('published declarations', () => {
 });
 
 describe('build configuration', () => {
+  const root = path.join(__dirname, '..', '..');
+
   // Vitest strips types without checking them, so a type error — in the source or in
   // tsconfig.json itself — would test green. `npm run build` does fail on one now, since it
   // runs tsc for the declarations, but the build is a separate step a test run can skip.
@@ -859,7 +868,6 @@ describe('build configuration', () => {
   // This runs the installed tsc rather than calling the compiler API: TypeScript 7 is a
   // native binary whose package exports no compiler API, only `version` and `unstable/*`.
   test('the project compiles under its own tsconfig.json with no diagnostics', () => {
-    const root = path.join(__dirname, '..', '..');
     // The exports map hides `typescript/bin/tsc`, but package.json is exported and its
     // `bin` field names the launcher.
     const tsPackage = createRequire(import.meta.url).resolve('typescript/package.json');
@@ -875,6 +883,45 @@ describe('build configuration', () => {
       output: '',
     });
   }, 30000);
+
+  // The Node floor is stated in three places that must agree: `engines`, the syntax level the
+  // bundle is compiled down to, and the floors of the runtime dependencies a consumer installs
+  // alongside it. @mdaemon/emitter raised its own floor to 18 while `engines` still said 16,
+  // so Node 16 consumers were installing a dependency that did not claim to support them.
+  describe('the Node floor', () => {
+    const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+
+    /** The major version of a `>=N[.N[.N]]` range; anything else needs a human to compare. */
+    function floorOf(range: string, owner: string): number {
+      const match = /^>=\s*(\d+)(?:\.\d+){0,2}$/.exec(range.trim());
+      expect(match ? owner : `${owner} has engines.node "${range}", not a plain >= range`).toBe(owner);
+      return Number(match![1]);
+    }
+
+    /** Our own floor. Called inside each test, so a malformed range fails that test. */
+    const ownFloor = () => floorOf(pkg.engines.node, pkg.name);
+
+    test('every runtime dependency supports the oldest Node that engines allows', () => {
+      const floor = ownFloor();
+      for (const dependency of Object.keys(pkg.dependencies ?? {})) {
+        // Read from node_modules directly: an exports map need not expose package.json.
+        const manifest = path.join(root, 'node_modules', ...dependency.split('/'), 'package.json');
+        const range = JSON.parse(fs.readFileSync(manifest, 'utf8')).engines?.node;
+        if (range === undefined) continue;
+        const required = floorOf(range, dependency);
+        expect(`${dependency} needs Node ${required}`).toBe(
+          required <= floor ? `${dependency} needs Node ${required}` : `${dependency} needs Node ${floor}`
+        );
+      }
+    });
+
+    test('the bundle is compiled for the oldest Node that engines allows', () => {
+      const viteConfig = fs.readFileSync(path.join(root, 'vite.config.ts'), 'utf8');
+      const target = /\btarget:\s*["']node(\d+)["']/.exec(viteConfig);
+      expect(target).not.toBeNull();
+      expect(Number(target![1])).toBe(ownFloor());
+    });
+  });
 });
 
 describe('lookup performance', () => {

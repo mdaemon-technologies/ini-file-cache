@@ -23,7 +23,10 @@ jobs:
         node-version: 24.x
         registry-url: https://registry.npmjs.org
         cache: 'npm'
-    - run: npm install -g npm@latest   # trusted publishing and staged publishing need a recent npm
+    # Trusted publishing and staged publishing need a recent npm. Pinned to a major rather
+    # than @latest: npm 12 changed the output of `npm pack --json`, which broke the test run
+    # below mid-release, and a new major should arrive through a reviewed edit here instead.
+    - run: npm install -g npm@12
     - run: npm ci
     - run: npm run build
     - run: npm test

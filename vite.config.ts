@@ -42,7 +42,8 @@ export default defineConfig({
   },
   build: {
     // A Node library: nothing here may rely on syntax newer than the oldest supported Node.
-    target: "node16",
+    // Keep in step with `engines` in package.json; a test holds the two together.
+    target: "node18",
     outDir: "dist",
     // Vite empties dist/ first; `tsc --emitDeclarationOnly` runs afterwards to add the .d.ts.
     emptyOutDir: true,

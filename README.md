@@ -16,6 +16,9 @@ Not applicable to a browser context.
 npm install @mdaemon/ini-file-cache
 ```
 
+Requires Node.js 18 or later. Version 2.x declared Node 16, but its emitter dependency no
+longer supports it.
+
 ## Usage
 
 ### ES modules
