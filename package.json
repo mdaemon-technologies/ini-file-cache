@@ -1,6 +1,6 @@
 {
   "name": "@mdaemon/ini-file-cache",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "A library for reading, writing, and watching ini files for changes",
   "type": "module",
   "main": "dist/iniFileCache.cjs",
@@ -12,8 +12,9 @@
   "scripts": {
     "test": "vitest run && npm run test:smoke",
     "dev-test": "vitest",
-    "build": "vite build && tsc --emitDeclarationOnly",
+    "build": "vite build && node ./node_modules/typescript7/bin/tsc --emitDeclarationOnly",
     "dev": "vite build --watch",
+    "lint": "eslint .",
     "pub": "npm run build && npm run test && npm publish",
     "test:smoke": "node --test smoke/smoke.test.cjs smoke/smoke.test.mjs"
   },
@@ -43,9 +44,14 @@
   },
   "homepage": "https://github.com/mdaemon-technologies/ini-file-cache#readme",
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^25.9.0",
+    "eslint": "^10.15.0",
+    "globals": "^17.14.0",
     "terser": "^5.51.2",
-    "typescript": "~7.0.2",
+    "typescript": "npm:@typescript/typescript6@~6.0.2",
+    "typescript-eslint": "^8.73.0",
+    "typescript7": "npm:typescript@~7.0.2",
     "vite": "^8.3.6",
     "vitest": "^5.1.0"
   },

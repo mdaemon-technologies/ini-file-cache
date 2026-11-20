@@ -4,7 +4,10 @@ import * as fs from "fs";
 import { builtinModules } from "module";
 import * as path from "path";
 
-const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+const pkg = JSON.parse(fs.readFileSync("package.json", "utf8")) as {
+  typings: string;
+  dependencies?: Record<string, string>;
+};
 const base = path.basename(pkg.typings, ".d.ts");
 
 /**

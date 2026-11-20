@@ -6,7 +6,7 @@ import * as path from "path";
 
 export interface ILockResult {
   token: string | null;
-  error?: unknown;
+  error?: Error;
 }
 
 export interface IFileSignature {
@@ -39,12 +39,12 @@ const LOCK_STALE_MS = 10000;
 
 // fs write options. `flush` was added in Node 20.10 and is silently ignored before that,
 // so on the older runtimes this package still supports the write simply is not flushed.
-const WRITE_OPTIONS: fs.WriteFileOptions = { flush: true } as fs.WriteFileOptions;
+const WRITE_OPTIONS: fs.WriteFileOptions = { flush: true };
 
 const RENAME_MAX_ATTEMPTS = 3;
 const RENAME_RETRY_DELAY = 50;
 // Windows cannot rename over a file another process holds open; writing in place still works.
-const RENAME_FALLBACK_CODES = ["EPERM", "EBUSY", "EACCES"];
+const RENAME_FALLBACK_CODES: (string | undefined)[] = ["EPERM", "EBUSY", "EACCES"];
 
 // Filesystems that are case-insensitive by default, where a watch event may report the
 // file name in a different case than the one the caller supplied.
@@ -82,6 +82,11 @@ function tryUnlink(file: string): void {
   }
 }
 
+/** The `code` of a caught Node.js error; undefined for anything thrown without one. */
+function errorCode(error: unknown): string | undefined {
+  return (error as NodeJS.ErrnoException | null | undefined)?.code;
+}
+
 /** Best-effort close, for cleanup whose failure leaves nothing further to try. */
 function tryClose(descriptor: number): void {
   try {
@@ -111,14 +116,13 @@ export async function acquireLock(file: string): Promise<ILockResult> {
       fs.closeSync(descriptor);
       descriptor = null;
       return { token };
-    } catch (error: any) {
+    } catch (error) {
       if (descriptor !== null) {
         // Close before touching the lock again: an open descriptor prevents the unlink
         // below from succeeding on Windows.
         tryClose(descriptor);
-        descriptor = null;
       }
-      if (error?.code !== "EEXIST") {
+      if (errorCode(error) !== "EEXIST") {
         if (created) {
           // Ours: created, but not stamped with our token, so it would block every writer
           // until it aged out. Take it back out. A failure to open says nothing about who
@@ -126,7 +130,7 @@ export async function acquireLock(file: string): Promise<ILockResult> {
           // writer legitimately holds it must not remove theirs.
           tryUnlink(lock);
         }
-        return { token: null, error };
+        return { token: null, error: error instanceof Error ? error : new Error(String(error)) };
       }
       try {
         const stats = fs.statSync(lock);
@@ -168,8 +172,8 @@ async function renameWithRetries(from: string, to: string): Promise<boolean> {
     try {
       fs.renameSync(from, to);
       return true;
-    } catch (error: any) {
-      if (!RENAME_FALLBACK_CODES.includes(error?.code)) {
+    } catch (error) {
+      if (!RENAME_FALLBACK_CODES.includes(errorCode(error))) {
         throw error;
       }
       if (attempt < RENAME_MAX_ATTEMPTS - 1) {
@@ -211,8 +215,8 @@ export function ensureFile(file: string, directory: string): void {
     // process could create and populate the file, and the write would truncate everything
     // it had just put there.
     fs.writeFileSync(file, "", { flag: "wx" });
-  } catch (error: any) {
-    if (error?.code !== "EEXIST") {
+  } catch (error) {
+    if (errorCode(error) !== "EEXIST") {
       throw error;
     }
   }

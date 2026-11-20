@@ -40,10 +40,13 @@ export interface IIniFileCacheListener {
   on(event: "error", namespace: string, handler: (error: Error) => void): void;
   on(event: "close", handler: () => void): void;
   on(event: "close", namespace: string, handler: () => void): void;
+  // Public types: `unknown[]` would reject a consumer's `(name: string) => void` handler.
+  /* eslint-disable @typescript-eslint/no-explicit-any */
   on(event: string, handler: (...args: any[]) => void): void;
   on(event: string, namespace: string, handler: (...args: any[]) => void): void;
   once(event: string, handler: (...args: any[]) => void): void;
   once(event: string, namespace: string, handler: (...args: any[]) => void): void;
+  /* eslint-enable @typescript-eslint/no-explicit-any */
   /**
    * Removes handlers for `event`. A handler registered without a namespace is filed under
    * a shared default one, and this removes every handler in the namespace it is given — so
@@ -223,7 +226,7 @@ export default class IniFileCache {
         this.parse(read.contents, read);
       }
     } catch (error) {
-      this.fail(new Error(`Failed to read file: ${error}`));
+      this.fail(new Error(`Failed to read file: ${String(error)}`));
     }
   }
 
@@ -241,7 +244,7 @@ export default class IniFileCache {
         return this.readFileContents();
       } catch (error) {
         if (attempt === READ_MAX_ATTEMPTS - 1) {
-          this.fail(new Error(`Failed to read file after ${READ_MAX_ATTEMPTS} attempts: ${error}`));
+          this.fail(new Error(`Failed to read file after ${READ_MAX_ATTEMPTS} attempts: ${String(error)}`));
           // The usual cause of an unreadable file is a deleted one, and the directory may
           // have gone with it. Other platforms simply stop delivering watch events in that
           // case, so this is where a dead watcher is noticed there.
@@ -369,7 +372,7 @@ export default class IniFileCache {
 
     const lock = await acquireLock(this.file);
     if (!lock.token) {
-      const reason = lock.error ? `: ${lock.error}` : " (timed out waiting for another writer)";
+      const reason = lock.error ? `: ${String(lock.error)}` : " (timed out waiting for another writer)";
       return this.fail(new Error(`Failed to acquire the lock for ${this.file}${reason}`));
     }
 
@@ -415,7 +418,7 @@ export default class IniFileCache {
     try {
       this.watcher.start();
     } catch (error) {
-      this.fail(new Error(`Failed to watch file: ${error}`));
+      this.fail(new Error(`Failed to watch file: ${String(error)}`));
     }
   }
 

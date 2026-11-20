@@ -5,6 +5,27 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.1] - 2026-11-19
+
+### Changed
+
+- Internal only; the public API, the published declarations and every documented behavior
+  are unchanged. The source is now linted with ESLint and typescript-eslint's type-checked
+  rules (`npm run lint`). What it found was tidying, not bugs: caught errors are read as
+  `unknown` through one helper rather than as `any`, and error messages stringify their
+  cause explicitly, with the same text as before.
+- typescript-eslint needs a compiler API, and TypeScript 7 has none, so TypeScript 6 is now
+  installed as `typescript` for the linter and 7 as `typescript7` for the build. Both bring
+  a `tsc` command and npm links only one of them, which here is 6, so a bare `tsc` would
+  have quietly built the declarations with the wrong compiler. `npm run build` now runs
+  TypeScript 7's launcher by path.
+
+### Tests
+
+- ESLint runs as part of `npm test`, so CI enforces it without a separate step.
+- The build is checked to compile with TypeScript 7, and the existing type-check now runs
+  the same compiler the build does rather than whatever `typescript` resolves to.
+
 ## [3.0.0] - 2026-11-09
 
 ### Changed

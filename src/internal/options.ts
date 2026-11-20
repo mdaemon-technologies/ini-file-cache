@@ -41,7 +41,7 @@ export function resolveOptions(options: IIniFileCacheOptions): IResolvedOptions 
     throw new TypeError("options must be an object");
   }
   if (options.encoding !== undefined && !Buffer.isEncoding(options.encoding)) {
-    throw new TypeError(`encoding "${options.encoding}" is not a supported buffer encoding`);
+    throw new TypeError(`encoding "${String(options.encoding)}" is not a supported buffer encoding`);
   }
   return {
     maxFileSize: numberOption(options.maxFileSize, "maxFileSize", DEFAULT_MAX_FILE_SIZE, 1),

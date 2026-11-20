@@ -860,19 +860,32 @@ describe('published declarations', () => {
 
 describe('build configuration', () => {
   const root = path.join(__dirname, '..', '..');
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+
+  /**
+   * The TypeScript launcher the build runs. TypeScript 7 is a native binary with no compiler
+   * API, and typescript-eslint needs one, so TypeScript 6 is installed under the name
+   * `typescript` and 7 under the `typescript7` alias. Both pull in a package with a `tsc` bin
+   * and npm links only one of them, so a bare `tsc` in a script can quietly mean TypeScript 6.
+   * The build names its launcher by path, and these tests check the compiler found there.
+   */
+  function buildCompiler(): string {
+    const match = /\bnode\s+(\S+\/tsc)(?=\s|$)/.exec(pkg.scripts.build);
+    expect(match ? 'found' : `"${pkg.scripts.build}" runs no "node <path>/tsc"`).toBe('found');
+    return path.join(root, match![1]);
+  }
+
+  test('the build compiles with TypeScript 7', () => {
+    const result = spawnSync(process.execPath, [buildCompiler(), '--version'], { cwd: root, encoding: 'utf8' });
+    expect(result.error).toBeUndefined();
+    expect(result.stdout.trim()).toMatch(/^Version 7\./);
+  });
 
   // Vitest strips types without checking them, so a type error — in the source or in
   // tsconfig.json itself — would test green. `npm run build` does fail on one now, since it
   // runs tsc for the declarations, but the build is a separate step a test run can skip.
-  //
-  // This runs the installed tsc rather than calling the compiler API: TypeScript 7 is a
-  // native binary whose package exports no compiler API, only `version` and `unstable/*`.
   test('the project compiles under its own tsconfig.json with no diagnostics', () => {
-    // The exports map hides `typescript/bin/tsc`, but package.json is exported and its
-    // `bin` field names the launcher.
-    const tsPackage = createRequire(import.meta.url).resolve('typescript/package.json');
-    const tsc = path.join(path.dirname(tsPackage), JSON.parse(fs.readFileSync(tsPackage, 'utf8')).bin.tsc);
-    const result = spawnSync(process.execPath, [tsc, '--noEmit', '-p', path.join(root, 'tsconfig.json')], {
+    const result = spawnSync(process.execPath, [buildCompiler(), '--noEmit', '-p', path.join(root, 'tsconfig.json')], {
       cwd: root,
       encoding: 'utf8',
     });
@@ -884,13 +897,24 @@ describe('build configuration', () => {
     });
   }, 30000);
 
+  // `npm run lint` runs the same check by hand. It is a test as well, for the same reason the
+  // compile check is: CI runs `npm test`, and a separate step is one a run can skip.
+  test('ESLint reports no problems', async () => {
+    const { ESLint } = await import('eslint');
+    const results = await new ESLint({ cwd: root }).lintFiles(['.']);
+    const problems = results.flatMap((result) =>
+      result.messages.map(
+        (m) => `${path.relative(root, result.filePath)}:${m.line}:${m.column} ${m.ruleId ?? 'fatal'}: ${m.message}`
+      )
+    );
+    expect(problems).toEqual([]);
+  }, 60000);
+
   // The Node floor is stated in three places that must agree: `engines`, the syntax level the
   // bundle is compiled down to, and the floors of the runtime dependencies a consumer installs
   // alongside it. @mdaemon/emitter raised its own floor to 18 while `engines` still said 16,
   // so Node 16 consumers were installing a dependency that did not claim to support them.
   describe('the Node floor', () => {
-    const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
-
     /** The major version of a `>=N[.N[.N]]` range; anything else needs a human to compare. */
     function floorOf(range: string, owner: string): number {
       const match = /^>=\s*(\d+)(?:\.\d+){0,2}$/.exec(range.trim());
@@ -1602,7 +1626,7 @@ describe('save', () => {
         throw Object.assign(new Error('EMFILE: too many open files'), { code: 'EMFILE' });
       }
       return (realOpenSync as (...a: unknown[]) => number)(...args);
-    }) as typeof fs.openSync;
+    });
     syncBuiltinESMExports();
 
     try {
